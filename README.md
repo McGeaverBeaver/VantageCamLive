@@ -37,7 +37,7 @@ Top-Right (Popup): These images appear for 20 seconds and then hide for 5 minute
 Day/Night Modes: The system automatically switches between the DAY and NIGHT folders based on the hours you define (Default: 6 AM - 8 PM).
 Supported Formats: .png, .jpg, .jpeg
 ---
-🛠️ Advanced Configuration
+### 🛠️ Advanced Configuration
 These variables can be added to your Docker template or Compose file to fine-tune the stream.
 | Variable                 | Default | Description                                 |
 | `VIDEO_BITRATE`          | 14M     | Output stream quality.                      |
@@ -47,7 +47,7 @@ These variables can be added to your Docker template or Compose file to fine-tun
 | `DAY_END_HOUR`           | 20      | Hour (0-23) when Night mode begins.         |
 | `OVERLAYAD_ROTATE_TIMER` | 30      | How many seconds each Top-Left ad displays. |
 ---
-🎛️ Audio Control API
+### 🎛️ Audio Control API
 You can mute or unmute the YouTube stream remotely (e.g., via Home Assistant or a Stream Deck) using the built-in REST API.
 | Action           | Command Example                                   |
 | **Check Status** | `curl http://YOUR_IP:9998/audio/status`           |
