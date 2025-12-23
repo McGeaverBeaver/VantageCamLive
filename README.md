@@ -1,8 +1,12 @@
-# VantageCamLive
-OpenSource Professional Live Stream Broadcaster with Weather &amp; Community Sponsors Overlays.
+# Vantage Cam Live
+**OpenSource Automated Live Stream Broadcaster with Weather & Sponsors Overlay**
 
-Vantage Cam Live is a "set-it-and-forget-it" Docker container that transforms a standard security camera feed into a professional live broadcast. It handles weather overlays, community sponsor rotation, and YouTube Live streaming with automatic letterboxing—ensuring your stream looks perfect on any screen, regardless of your camera's aspect ratio.
+Transform a standard security camera feed into a professional broadcast without the hassle. Vantage Cam Live runs entirely in Docker and handles all the heavy lifting for you:
 
+* **⚡ Automated Production:** Overlays real-time weather and rotating sponsor logos automatically.
+* **📺 Universal Fit:** Smart "letterboxing" fixes aspect ratios, so even ultra-wide cameras look perfect on YouTube.
+* **🚀 Set & Forget:** Once configured, it runs 24/7 with no maintenance required.
+---
 ### 🌟 Key Features
 
 * **Universal Compatibility:** Automatically resizes and "letterboxes" any camera input (Wide, Ultrawide, Standard) to a perfect 1080p YouTube-ready format.
@@ -12,7 +16,6 @@ Vantage Cam Live is a "set-it-and-forget-it" Docker container that transforms a 
 * **Hardware Accelerated:** Uses Intel QuickSync (VAAPI) for ultra-low CPU usage.
 
 ---
-
 ### 🚀 Getting Started
 
 1) Folder Structure - Before starting, create a folder on your host (e.g., `/home/myuser/vantagecam`) to store your images. The container will automatically create the sub-folders for you:
@@ -28,29 +31,46 @@ Vantage Cam Live is a "set-it-and-forget-it" Docker container that transforms a 
 └── weather_icons/  <-- Place your weather icons here
 ```
 ---
-📢 Sponsor Management
+### 📢 Sponsor Management
 
-The system automatically watches your /config/ads folders. You do not need to restart the container when adding or removing images.
-Auto-Resizing: You do not need to resize your images to fit the stream. The system will automatically scale any image you drop in (regardless of resolution) to fit the overlay area while maintaining its correct aspect ratio.
-Top-Left (Rotating): These images display one by one in a continuous loop. This spot is ideal for primary partner logos.
-Top-Right (Popup): These images appear for 20 seconds and then hide for 5 minutes. This spot is ideal for "Call to Action" messages or special events.
-Day/Night Modes: The system automatically switches between the DAY and NIGHT folders based on the hours you define (Default: 6 AM - 8 PM).
-Supported Formats: .png, .jpg, .jpeg
+The system features a **dynamic "watch folder" engine**. You can add, remove, or update sponsor images in real-time without restarting the stream.
+
+* **⚡ Auto-Resizing:**
+    Don't worry about pixel dimensions. The system automatically scales any image you drop in (4K, 1080p, or irregular sizes) to fit the overlay area perfectly while maintaining the correct aspect ratio.
+* **🔄 Top-Left (Partner Rotation):**
+    * *Behavior:* Displays images one by one in a continuous, endless loop.
+    * *Best for:* Primary sponsors, partner logos, or station identification.
+* **🔔 Top-Right (Popup / Call-to-Action):**
+    * *Behavior:* Appears for **20 seconds**, then disappears for **5 minutes** (configurable).
+    * *Best for:* Special event announcements, "Like & Subscribe" reminders, or premium spotlight ads.
+* **☀️/🌙 Day & Night Modes:**
+    The system automatically switches between the `DAY` and `NIGHT` folders based on your configured hours (Default: Day starts at 6 AM, Night starts at 8 PM).
+* **Supported Formats:** `.png`, `.jpg`, `.jpeg`
+
 ---
 ### 🛠️ Advanced Configuration
+
 These variables can be added to your Docker template or Compose file to fine-tune the stream.
-| Variable                 | Default | Description                                 |
-| `VIDEO_BITRATE`          | 14M     | Output stream quality.                      |
-| `SCALE_TL`               | 500     | Max width (px) of Top-Left images.          |
-| `SCALE_TR`               | 400     | Max width (px) of Top-Right images.         |
-| `DAY_START_HOUR`         | 6       | Hour (0-23) when Day mode begins.           |
-| `DAY_END_HOUR`           | 20      | Hour (0-23) when Night mode begins.         |
-| `OVERLAYAD_ROTATE_TIMER` | 30      | How many seconds each Top-Left ad displays. |
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `AUDIO_API_KEY` | *None* | **Recommended:** Set a password/key to secure the Audio API. |
+| `VIDEO_BITRATE` | `14M` | Output stream quality. |
+| `SCALE_TL` | `500` | Max width (px) of Top-Left images. |
+| `SCALE_TR` | `400` | Max width (px) of Top-Right images. |
+| `DAY_START_HOUR` | `6` | Hour (0-23) when Day mode begins. |
+| `DAY_END_HOUR` | `20` | Hour (0-23) when Night mode begins. |
+| `OVERLAYAD_ROTATE_TIMER` | `30` | How many seconds each Top-Left ad displays. |
 ---
 ### 🎛️ Audio Control API
-You can mute or unmute the YouTube stream remotely (e.g., via Home Assistant or a Stream Deck) using the built-in REST API.
-| Action           | Command Example                                   |
-| **Check Status** | `curl http://YOUR_IP:9998/audio/status`           |
-| **Enable Audio** | `curl -X POST http://YOUR_IP:9998/audio/unmute`   |
-| **Mute Audio**   | `curl -X POST http://YOUR_IP:9998/audio/mute`     |
-| **Toggle**       | `curl -X POST http://YOUR_IP:9998/audio/toggle`   |
+
+You can mute or unmute the YouTube stream remotely. If you set an `AUDIO_API_KEY`, you must provide it in the header.
+
+| Action | Command Example (with API Key) |
+| :--- | :--- |
+| **Check Status** | `curl -H "X-API-Key: YOUR_KEY" http://YOUR_IP:9998/audio/status` |
+| **Enable Audio** | `curl -X POST -H "X-API-Key: YOUR_KEY" http://YOUR_IP:9998/audio/unmute` |
+| **Mute Audio** | `curl -X POST -H "X-API-Key: YOUR_KEY" http://YOUR_IP:9998/audio/mute` |
+| **Toggle** | `curl -X POST -H "X-API-Key: YOUR_KEY" http://YOUR_IP:9998/audio/toggle` |
+---
+
