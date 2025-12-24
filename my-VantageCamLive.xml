@@ -29,6 +29,7 @@
   <Config Name="Output Password" Target="ADMIN_PASS" Default="password" Mode="" Description="Password for the new stream" Type="Variable" Display="always" Required="true" Mask="true">your_secure_password</Config>
   <Config Name="YouTube Stream Key" Target="YOUTUBE_KEY" Default="" Mode="" Description="Your YouTube Live Stream Key (leave blank to disable YouTube relay)" Type="Variable" Display="always" Required="false" Mask="true"></Config>
   <Config Name="YouTube Stream URL" Target="YOUTUBE_URL" Default="rtmp://a.rtmp.youtube.com/live2" Mode="" Description="YouTube RTMP ingest server" Type="Variable" Display="always" Required="true" Mask="false">rtmp://a.rtmp.youtube.com/live2</Config>
+  <Config Name="YouTube Bitrate" Target="YOUTUBE_BITRATE" Default="4500k" Mode="" Description="Upload bitrate for YouTube (e.g. 2500k, 4500k, 8000k)" Type="Variable" Display="always" Required="false" Mask="false">4500k</Config>
   <Config Name="GPU Device" Target="/dev/dri" Default="" Mode="" Description="Intel GPU Passthrough" Type="Device" Display="always" Required="true" Mask="false">/dev/dri</Config>
   <Config Name="Video Bitrate" Target="VIDEO_BITRATE" Default="14M" Mode="" Description="Quality of output stream (e.g. 4M to 14M)" Type="Variable" Display="always" Required="false" Mask="false">14M</Config>
   <Config Name="Appdata Path" Target="/config" Default="/mnt/user/appdata/vantagecam" Mode="rw" Description="Folder for weather icons and ad images" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/vantagecam</Config>

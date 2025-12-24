@@ -10,13 +10,14 @@ ADMIN_PASS="${ADMIN_PASS:-your_secure_password}"
 VAAPI_DEVICE="${VAAPI_DEVICE:-/dev/dri/renderD128}"
 
 # Feature Toggles
-ENABLE_LOCAL_STREAM="${ENABLE_LOCAL_STREAM:-false}" # New Toggle
+ENABLE_LOCAL_STREAM="${ENABLE_LOCAL_STREAM:-false}"
 
 # YouTube Settings
 YOUTUBE_URL="${YOUTUBE_URL:-rtmp://a.rtmp.youtube.com/live2}"
 YOUTUBE_KEY="${YOUTUBE_KEY:-}"
+YOUTUBE_BITRATE="${YOUTUBE_BITRATE:-4500k}" # NEW: Variable for YouTube Upload Quality
 
-# Output Settings
+# Output Settings (Main Stream)
 VIDEO_BITRATE="${VIDEO_BITRATE:-14M}"
 VIDEO_FPS="${VIDEO_FPS:-30}"
 
@@ -61,8 +62,6 @@ mkdir -p "$ADS_BASE/topright/DAY"
 mkdir -p "$ADS_BASE/topright/NIGHT"
 
 echo "--- Configuring RTSP Server ---"
-# Logic: If Local Stream is enabled, bind to all interfaces (:8554).
-# If disabled, bind only to localhost (127.0.0.1:8554) so only internal ffmpeg can see it.
 if [ "$ENABLE_LOCAL_STREAM" = "true" ]; then
     RTSP_ADDRESS=":8554"
     echo ">> Local Stream: ENABLED (Accessible on Port 8554)"
@@ -211,7 +210,7 @@ if [ "$WEATHER_ENABLED" = "true" ]; then
     ) &
 fi
 
-# --- YouTube Restreamer (UNIVERSAL FIT) ---
+# --- YouTube Restreamer (GPU ACCELERATED + SINGLE SOURCE) ---
 if [ -n "$YOUTUBE_KEY" ]; then
     AUDIO_MODE_FILE="/config/audio_mode"
     RESTREAMER_PID_FILE="/config/youtube_restreamer.pid"
@@ -221,30 +220,32 @@ if [ -n "$YOUTUBE_KEY" ]; then
         echo "[Stream] YouTube restreamer starting in 10s..."
         sleep 10
         
-        # UNIVERSAL FILTER:
-        # 1. scale=...:decrease -> Fit image inside 1920x1080 without stretching
-        # 2. pad=... -> Fill the rest of the 1920x1080 frame with black bars
-        # This works for Wide (you), Normal (16:9), and Tall (9:16) users perfectly.
-        YT_FLAGS="-c:v libx264 -preset veryfast -b:v 4500k -maxrate 4500k -bufsize 9000k -pix_fmt yuv420p -g 60 -vf scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+        # GPU Scaler + Padder
+        YT_FILTERS="scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=nv12,hwupload"
         
         while true; do
             AUDIO_MODE=$(cat "$AUDIO_MODE_FILE" 2>/dev/null || echo "muted")
             
+            # Note: We now pull ONLY from localhost (which has synced audio+video)
             if [ "$AUDIO_MODE" = "unmuted" ]; then
-                echo "[Stream] YouTube: LIVE AUDIO (Universal Fit)"
+                echo "[Stream] YouTube: LIVE AUDIO (Synced)"
                 ffmpeg -hide_banner -loglevel error \
+                    -init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va \
                     -rtsp_transport tcp -i "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live" \
-                    -rtsp_transport tcp -i "${RTSP_SOURCE}" \
-                    -map 0:v:0 -map 1:a:0? \
-                    $YT_FLAGS \
+                    -vf "$YT_FILTERS" \
+                    -map 0:v:0 -map 0:a:0? \
+                    -c:v h264_vaapi -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60 \
                     -c:a aac -b:a 128k -ac 2 \
                     -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" &
             else
-                echo "[Stream] YouTube: MUTED (Universal Fit)"
+                echo "[Stream] YouTube: MUTED"
                 ffmpeg -hide_banner -loglevel error \
+                    -init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va \
                     -rtsp_transport tcp -i "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live" \
                     -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
-                    $YT_FLAGS \
+                    -vf "$YT_FILTERS" \
+                    -map 0:v:0 -map 1:a:0 \
+                    -c:v h264_vaapi -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60 \
                     -c:a aac -b:a 128k \
                     -shortest \
                     -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" &
@@ -259,7 +260,7 @@ if [ -n "$YOUTUBE_KEY" ]; then
 fi
 
 # ==============================================================================
-#  3. MAIN STREAM ENCODING
+#  3. MAIN STREAM ENCODING (PASS-THROUGH AUDIO)
 # ==============================================================================
 echo "--- Starting Main Stream ---"
 
@@ -299,12 +300,15 @@ fi
 
 FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=nv12[soft_final];[soft_final]hwupload[vfinal]"
 
+# FIX: Added '-map 0:a? -c:a copy' to pass original audio to internal server
 while true; do
     ffmpeg -hide_banner -loglevel warning -init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va \
     $INPUTS \
     -filter_complex "$FINAL_FILTERS" \
     -map "[vfinal]" \
+    -map 0:a? \
     -c:v h264_vaapi -b:v $VIDEO_BITRATE -maxrate $VIDEO_BITRATE -bufsize 28M -r $VIDEO_FPS -g $(($VIDEO_FPS * 2)) \
+    -c:a copy \
     -f rtsp -rtsp_transport tcp "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live"
     
     sleep 5
