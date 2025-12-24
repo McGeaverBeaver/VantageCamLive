@@ -1,4 +1,5 @@
-# Vantage Cam Live
+
+# Vantage Cam Live v2.0
 **OpenSource Automated Live Stream Broadcaster with Weather & Sponsors Overlay**
 
 See a demo @ [https://simcoelocal.ca/](https://simcoelocal.ca/)
@@ -6,13 +7,14 @@ See a demo @ [https://simcoelocal.ca/](https://simcoelocal.ca/)
 Transform a standard security camera feed into a professional broadcast without the hassle. Vantage Cam Live runs entirely in Docker and handles all the heavy lifting for you:
 
 * **⚡ Automated Production:** Overlays real-time weather and rotating sponsor logos automatically.
-* **📺 Universal Fit:** Smart "letterboxing" fixes aspect ratios, so even ultra-wide cameras look perfect on YouTube.
-* **🚀 Set & Forget:** Once configured, it runs 24/7 with no maintenance required.
+* **📺 Universal Fit:** Smart "Fill" scaling fixes aspect ratios, so even 4:3 or ultra-wide cameras look perfect on YouTube (No more black bars!).
+* **🚀 Set & Forget:** Once configured, it runs 24/7 with self-healing assets and no maintenance required.
 ---
 ### 🌟 Key Features
 
-* **Universal Compatibility:** Automatically resizes and "letterboxes" any camera input (Wide, Ultrawide, Standard) to a perfect 1080p YouTube-ready format.
-* **Live Weather Overlay:** Real-time local weather updates powered by Open-Meteo, displayed elegantly in the corner.
+* **Resolution Unlocked:** Stream in crisp **1440p (2K)** by default, or configure for 1080p/4K. No longer limited to low-res streams.
+* **Smart Scaling Engine:** The new `SCALING_MODE` automatically zooms and crops 4:3 camera signals to fill a 16:9 frame, eliminating "windowboxing" (black bars) on desktop viewers.
+* **Live Weather Overlay:** Real-time local weather updates powered by Open-Meteo with **Self-Healing Assets** (icons are automatically downloaded/repaired on boot).
 * **Dynamic Sponsor System:** "Watch folders" allow you to drag-and-drop sponsor logos for automatic rotation (Day/Night support) without restarting the stream.
 * **Audio Control API:** Mute or unmute your stream remotely using simple web commands.
 * **Hardware Accelerated:** Uses Intel QuickSync (VAAPI) for ultra-low CPU usage.
@@ -32,7 +34,12 @@ Before starting, create a folder on your host (e.g., `/home/myuser/vantagecam`) 
 │   └── topright/
 │       ├── DAY/
 │       └── NIGHT/
-└── weather_icons/  <-- Place your weather icons here
+└── weather_icons/  <-- Icons auto-download here (Self-Healing)
+``` 
+**2. Quick Start**
+Copy the my-VantageCamLive.xml on UnRAID -> /boot/config/plugins/dockerMan/templates-user 
+Navigate in Unraid to Docker, and click Add Container. Find in the list VantageCamLive. Update variables , run & enjoy.
+
 ```
 #### 2. Configuration & Launch
 Copy the following configuration into your Docker Compose file.
