@@ -48,15 +48,12 @@ services:
       - ADMIN_USER=admin
       - ADMIN_PASS=change_me_please
       - ENABLE_LOCAL_STREAM=true # Enable local viewing on port 8554
-      
       - WEATHER_LAT=40.7128
       - WEATHER_LON=-74.0060
       - WEATHER_LOCATION=My City
       - WEATHER_TIMEZONE=America/New_York
-      
-      - YOUTUBE_URL=rtmp://[a.rtmp.youtube.com/live2](https://a.rtmp.youtube.com/live2)
+      - YOUTUBE_URL=rtmp://a.rtmp.youtube.com/live2
       - YOUTUBE_KEY=xxxx-xxxx-xxxx-xxxx
-      
     volumes:
       - /mnt/user/appdata/vantagecam:/config
     ports:
