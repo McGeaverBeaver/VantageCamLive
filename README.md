@@ -44,7 +44,7 @@ Navigate to the Docker tab in Unraid and click Add Container.
 Select VantageCamLive from the "Template" dropdown list.
 Update your variables (RTSP Source, YouTube Key, etc.) and click Apply.
 
-```
+---
 #### 2. Configuration & Launch
 Copy the following configuration into your Docker Compose file.
 
