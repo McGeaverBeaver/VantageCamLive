@@ -18,7 +18,9 @@ Transform a standard security camera feed into a professional broadcast without 
 ---
 ### 🚀 Getting Started
 
-1) Folder Structure - Before starting, create a folder on your host (e.g., `/home/myuser/vantagecam`) to store your images. The container will automatically create the sub-folders for you:
+**1. Folder Structure**
+Before starting, create a folder on your host (e.g., `/home/myuser/vantagecam`) to store your images. The container will automatically create the sub-folders for you:
+
 ```text
 /config/
 ├── ads/
@@ -88,6 +90,7 @@ These variables can be added to your Docker template or Compose file to fine-tun
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
+| `ENABLE_LOCAL_STREAM` | `false` | Set to `true` to enable local RTSP viewing (Port 8554). |
 | `AUDIO_API_KEY` | *None* | **Recommended:** Set a password/key to secure the Audio API. |
 | `VIDEO_BITRATE` | `14M` | Output stream quality. |
 | `SCALE_TL` | `500` | Max width (px) of Top-Left images. |
@@ -95,10 +98,12 @@ These variables can be added to your Docker template or Compose file to fine-tun
 | `DAY_START_HOUR` | `6` | Hour (0-23) when Day mode begins. |
 | `DAY_END_HOUR` | `20` | Hour (0-23) when Night mode begins. |
 | `OVERLAYAD_ROTATE_TIMER` | `30` | How many seconds each Top-Left ad displays. |
+
 ---
+
 ### 🎛️ Audio Control API
 
-You can mute or unmute the YouTube stream remotely. If you set an `AUDIO_API_KEY`, you must provide it in the header.
+You can mute or unmute the YouTube stream remotely (e.g., via Home Assistant or a Stream Deck). If you set an `AUDIO_API_KEY`, you must provide it in the header.
 
 | Action | Command Example (with API Key) |
 | :--- | :--- |
@@ -107,4 +112,3 @@ You can mute or unmute the YouTube stream remotely. If you set an `AUDIO_API_KEY
 | **Mute Audio** | `curl -X POST -H "X-API-Key: YOUR_KEY" http://YOUR_IP:9998/audio/mute` |
 | **Toggle** | `curl -X POST -H "X-API-Key: YOUR_KEY" http://YOUR_IP:9998/audio/toggle` |
 ---
-
