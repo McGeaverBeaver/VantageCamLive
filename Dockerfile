@@ -22,7 +22,9 @@ RUN wget -O mediamtx.tar.gz https://github.com/bluenviron/mediamtx/releases/down
 COPY start.sh /start.sh
 COPY weather.py /weather.py
 COPY audio_api.py /audio_api.py
-RUN chmod +x /start.sh
+
+RUN sed -i 's/\r$//' /start.sh /weather.py /audio_api.py \
+    && chmod +x /start.sh
 
 # 4. Expose ports (RTSP: 8554, Audio API: 9998)
 EXPOSE 8554 9998
