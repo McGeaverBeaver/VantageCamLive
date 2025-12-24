@@ -30,7 +30,41 @@ Transform a standard security camera feed into a professional broadcast without 
 │       └── NIGHT/
 └── weather_icons/  <-- Place your weather icons here
 ```
+#### 2. Configuration & Launch
+Copy the following configuration into your Docker Compose file.
+
+```yaml
+version: "3"
+services:
+  vantagecam:
+    image: ghcr.io/mcgeaverbeaver/vantagecamlive:latest
+    container_name: vantagecam
+    devices:
+      - /dev/dri:/dev/dri # Intel QuickSync (Required)
+    environment:
+      # --- REQUIRED SETTINGS ---
+      - RTSP_SOURCE=rtsp://user:pass@192.168.1.50:554/stream
+      - ADMIN_USER=admin
+      - ADMIN_PASS=change_me_please
+      
+      # --- WEATHER SETTINGS ---
+      - WEATHER_LAT=40.7128
+      - WEATHER_LON=-74.0060
+      - WEATHER_LOCATION=My City
+      - WEATHER_TIMEZONE=America/New_York
+      
+      # --- YOUTUBE SETTINGS (Optional) ---
+      - YOUTUBE_URL=rtmp://[a.rtmp.youtube.com/live2](https://a.rtmp.youtube.com/live2)
+      - YOUTUBE_KEY=    # Leave blank to disable YouTube
+      
+    volumes:
+      - /mnt/user/appdata/vantagecam:/config
+    ports:
+      - 9998:9998 # Audio API
+    restart: unless-stopped
+```
 ---
+
 ### 📢 Sponsor Management
 
 The system features a **dynamic "watch folder" engine**. You can add, remove, or update sponsor images in real-time without restarting the stream.
