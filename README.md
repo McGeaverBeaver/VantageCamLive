@@ -50,12 +50,20 @@ services:
       - ADMIN_USER=admin
       - ADMIN_PASS=change_me_please
       - ENABLE_LOCAL_STREAM=true # Enable local viewing on port 8554
+      
+      # Weather Settings
       - WEATHER_LAT=40.7128
       - WEATHER_LON=-74.0060
       - WEATHER_LOCATION=My City
       - WEATHER_TIMEZONE=America/New_York
-      - YOUTUBE_URL=rtmp://a.rtmp.youtube.com/live2
+      
+      # YouTube Settings
+      - YOUTUBE_URL=rtmp://[a.rtmp.youtube.com/live2](https://a.rtmp.youtube.com/live2)
       - YOUTUBE_KEY=xxxx-xxxx-xxxx-xxxx
+      - YOUTUBE_WIDTH=2560  # Default 1440p
+      - YOUTUBE_HEIGHT=1440 # Default 1440p
+      - SCALING_MODE=fill   # 'fill' removes black bars, 'fit' adds padding
+      
     volumes:
       - /mnt/user/appdata/vantagecam:/config
     ports:
@@ -88,6 +96,10 @@ These variables can be added to your Docker template or Compose file to fine-tun
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
+| `SCALING_MODE` | `fill` | Set to `fill` to zoom/crop 4:3 cameras to 16:9. Set to `fit` to keep original ratio with bars. |
+| `YOUTUBE_WIDTH` | `2560` | Output video width (2560 for 1440p, 1920 for 1080p). |
+| `YOUTUBE_HEIGHT` | `1440` | Output video height. |
+| `YOUTUBE_BITRATE` | `4500k` | Upload bitrate. Increase for 1440p/4K streams (e.g., `8000k`). |
 | `ENABLE_LOCAL_STREAM` | `false` | Set to `true` to enable local RTSP viewing (Port 8554). |
 | `AUDIO_API_KEY` | *None* | **Recommended:** Set a password/key to secure the Audio API. |
 | `VIDEO_BITRATE` | `14M` | Output stream quality. |
@@ -96,7 +108,6 @@ These variables can be added to your Docker template or Compose file to fine-tun
 | `DAY_START_HOUR` | `6` | Hour (0-23) when Day mode begins. |
 | `DAY_END_HOUR` | `20` | Hour (0-23) when Night mode begins. |
 | `OVERLAYAD_ROTATE_TIMER` | `30` | How many seconds each Top-Left ad displays. |
-
 ---
 
 ### 🎛️ Audio Control API
