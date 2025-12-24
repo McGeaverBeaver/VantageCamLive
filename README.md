@@ -1,4 +1,3 @@
-
 # Vantage Cam Live v2.0
 **OpenSource Automated Live Stream Broadcaster with Weather & Sponsors Overlay**
 
@@ -9,6 +8,9 @@ Transform a standard security camera feed into a professional broadcast without 
 * **⚡ Automated Production:** Overlays real-time weather and rotating sponsor logos automatically.
 * **📺 Universal Fit:** Smart "Fill" scaling fixes aspect ratios, so even 4:3 or ultra-wide cameras look perfect on YouTube (No more black bars!).
 * **🚀 Set & Forget:** Once configured, it runs 24/7 with self-healing assets and no maintenance required.
+
+> **⚠️ HARDWARE REQUIREMENT:** This container is optimized for **Intel QuickSync**. It requires an Intel CPU/GPU with VAAPI support passed through to the container (`/dev/dri`). It will not work on CPU-only, AMD, or Nvidia setups without modifying the code.
+
 ---
 ### 🌟 Key Features
 
@@ -36,9 +38,11 @@ Before starting, create a folder on your host (e.g., `/home/myuser/vantagecam`) 
 │       └── NIGHT/
 └── weather_icons/  <-- Icons auto-download here (Self-Healing)
 ``` 
-**2. Quick Start**
-Copy the my-VantageCamLive.xml on UnRAID -> /boot/config/plugins/dockerMan/templates-user 
-Navigate in Unraid to Docker, and click Add Container. Find in the list VantageCamLive. Update variables , run & enjoy.
+**2. Quick Start UnRIAD**
+Copy the provided my-VantageCamLive.xml to your Unraid USB drive at: /boot/config/plugins/dockerMan/templates-user/.
+Navigate to the Docker tab in Unraid and click Add Container.
+Select VantageCamLive from the "Template" dropdown list.
+Update your variables (RTSP Source, YouTube Key, etc.) and click Apply.
 
 ```
 #### 2. Configuration & Launch
