@@ -1,6 +1,8 @@
 # Vantage Cam Live
 **OpenSource Automated Live Stream Broadcaster with Weather & Sponsors Overlay**
 
+See a demo @ [https://simcoelocal.ca/](https://simcoelocal.ca/)
+
 Transform a standard security camera feed into a professional broadcast without the hassle. Vantage Cam Live runs entirely in Docker and handles all the heavy lifting for you:
 
 * **⚡ Automated Production:** Overlays real-time weather and rotating sponsor logos automatically.
