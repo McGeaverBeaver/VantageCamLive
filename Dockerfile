@@ -24,8 +24,8 @@ COPY weather.py /weather.py
 COPY audio_api.py /audio_api.py
 RUN chmod +x /start.sh
 
-# 4. Expose ports (RTSP: 8554/8000/8001, MediaMTX API: 9997, Audio API: 9998)
-EXPOSE 8554 8000 8001 9997 9998
+# 4. Expose ports (Audio API: 9998)
+EXPOSE 9998
 
 # 5. Entrypoint with timezone support
 ENTRYPOINT ["/bin/bash", "-c", "export TZ=${WEATHER_TIMEZONE:-America/Toronto} && exec /start.sh"]

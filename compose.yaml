@@ -1,7 +1,7 @@
 version: "3"
 services:
   vantagecam:
-    image: ghcr.io/YOUR_USERNAME/vantagecamlive:latest
+    image: ghcr.io/mcgeaverbeaver/vantagecamlive:latest
     container_name: vantagecam
     devices:
       - /dev/dri:/dev/dri # Intel QuickSync (Required)
@@ -24,6 +24,5 @@ services:
     volumes:
       - /mnt/user/appdata/vantagecam:/config
     ports:
-      - 8554:8554 # Local RTSP Output
       - 9998:9998 # Audio API
     restart: unless-stopped

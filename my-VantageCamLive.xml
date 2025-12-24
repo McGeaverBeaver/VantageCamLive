@@ -1,19 +1,19 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>VantageCamLive</Name>
-  <Repository>ghcr.io/YOUR_USERNAME/vantagecamlive:latest</Repository>
+  <Repository>ghcr.io/mcgeaverbeaver/vantagecamlive:latest</Repository>
   <Registry/>
   <Network>br0</Network>
   <MyIP></MyIP>
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
   <Support/>
-  <Project>https://github.com/YOUR_USERNAME/vantagecamlive</Project>
+  <Project>https://github.com/mcgeaverbeaver/vantagecamlive</Project>
   <Overview>A high-performance stream processor that overlays real-time weather and rotating advertisements. Supports any camera aspect ratio (16:9, 32:9, etc.) by automatically letterboxing the output to a standard 1080p format.</Overview>
   <Category>MediaServer:Video</Category>
   <WebUI>http://[IP]:8554/</WebUI>
   <TemplateURL/>
-  <Icon>https://raw.githubusercontent.com/YOUR_USERNAME/vantagecamlive/main/icon.png</Icon>
+  <Icon>https://raw.githubusercontent.com/mcgeaverbeaver/vantagecamlive/main/icon.png</Icon>
   <ExtraParams>--restart=unless-stopped</ExtraParams>
   <PostArgs/>
   <CPUset/>
