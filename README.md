@@ -44,24 +44,23 @@ services:
     devices:
       - /dev/dri:/dev/dri # Intel QuickSync (Required)
     environment:
-      # --- REQUIRED SETTINGS ---
       - RTSP_SOURCE=rtsp://user:pass@192.168.1.50:554/stream
       - ADMIN_USER=admin
       - ADMIN_PASS=change_me_please
+      - ENABLE_LOCAL_STREAM=true # Enable local viewing on port 8554
       
-      # --- WEATHER SETTINGS ---
       - WEATHER_LAT=40.7128
       - WEATHER_LON=-74.0060
       - WEATHER_LOCATION=My City
       - WEATHER_TIMEZONE=America/New_York
       
-      # --- YOUTUBE SETTINGS (Optional) ---
       - YOUTUBE_URL=rtmp://[a.rtmp.youtube.com/live2](https://a.rtmp.youtube.com/live2)
-      - YOUTUBE_KEY=    # Leave blank to disable YouTube
+      - YOUTUBE_KEY=xxxx-xxxx-xxxx-xxxx
       
     volumes:
       - /mnt/user/appdata/vantagecam:/config
     ports:
+      - 8554:8554 # Video Output
       - 9998:9998 # Audio API
     restart: unless-stopped
 ```
