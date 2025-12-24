@@ -7,8 +7,8 @@ import sys
 from PIL import Image, ImageDraw, ImageFont
 
 # ================= CONFIGURATION =================
-LAT = os.getenv("WEATHER_LAT", "40.7128")    # Changed to NYC
-LON = os.getenv("WEATHER_LON", "-74.0060")   # Changed to NYC
+LAT = os.getenv("WEATHER_LAT", "40.7128")
+LON = os.getenv("WEATHER_LON", "-74.0060")
 LOCATION_NAME = os.getenv("WEATHER_LOCATION", "My City")
 TIMEZONE = os.getenv("WEATHER_TIMEZONE", "America/Toronto")
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -22,27 +22,44 @@ CAMERA_HEADING = 90  # 90 degrees = East
 def log(message):
     print(f"[{datetime.datetime.now()}] {message}")
 
-# --- HELPER: WMO Code to Icon Name Mapping ---
+# --- HELPER: WMO Code to Dark Sky Icon Mapping (UPDATED) ---
 def get_icon_filename(code, is_day):
-    # Determine suffix (d = day, n = night)
-    suffix = 'd' if is_day == 1 else 'n'
+    # [cite_start]Mapping WMO codes (OpenMeteo) to "Basmilius/Dark Sky" filenames [cite: 16]
+    
+    # 0: Clear Sky
+    if code == 0: 
+        return "clear-day.png" if is_day else "clear-night.png"
+    
+    # 1, 2: Mainly Clear / Partly Cloudy
+    if code in [1, 2]: 
+        return "partly-cloudy-day.png" if is_day else "partly-cloudy-night.png"
+    
+    # 3: Overcast
+    if code == 3:
+        return "cloudy.png"
+    
+    # 45, 48: Fog
+    if code in [45, 48]:
+        return "fog.png"
+    
+    # 51-55 (Drizzle), 61-65 (Rain), 80-82 (Showers)
+    if code in [51, 53, 55, 61, 63, 65, 80, 81, 82]:
+        return "rain.png"
+    
+    # 56-57, 66-67: Freezing Drizzle/Rain -> Sleet is the closest visual match
+    if code in [56, 57, 66, 67]:
+        return "sleet.png"
+    
+    # 71-77 (Snow), 85-86 (Snow Showers)
+    if code in [71, 73, 75, 77, 85, 86]:
+        return "snow.png"
+    
+    # 95-99: Thunderstorm
+    if code in [95, 96, 99]:
+        return "thunderstorm.png"
 
-    # Map WMO codes (OpenMeteo) to OpenWeatherMap icon names
-    if code == 0: return f"01{suffix}.png"       # Clear sky
-    if code in [1]: return f"02{suffix}.png"     # Mainly clear
-    if code in [2]: return f"03{suffix}.png"     # Partly cloudy
-    if code in [3]: return f"04{suffix}.png"     # Overcast
-    if code in [45, 48]: return f"50{suffix}.png" # Fog
-    if code in [51, 53, 55]: return f"09{suffix}.png" # Drizzle
-    if code in [56, 57]: return f"09{suffix}.png" # Freezing Drizzle
-    if code in [61, 63, 65]: return f"10{suffix}.png" # Rain
-    if code in [66, 67]: return f"13{suffix}.png" # Freezing Rain
-    if code in [71, 73, 75, 77]: return f"13{suffix}.png" # Snow
-    if code in [80, 81, 82]: return f"09{suffix}.png" # Rain showers
-    if code in [85, 86]: return f"13{suffix}.png" # Snow showers
-    if code in [95, 96, 99]: return f"11{suffix}.png" # Thunderstorm
-
-    return f"03{suffix}.png" # Default fallback
+    # Fallback
+    return "cloudy.png" 
 
 # --- FUNCTION 1: WEATHER GENERATOR ---
 def get_weather():

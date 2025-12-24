@@ -15,7 +15,12 @@ ENABLE_LOCAL_STREAM="${ENABLE_LOCAL_STREAM:-false}"
 # YouTube Settings
 YOUTUBE_URL="${YOUTUBE_URL:-rtmp://a.rtmp.youtube.com/live2}"
 YOUTUBE_KEY="${YOUTUBE_KEY:-}"
-YOUTUBE_BITRATE="${YOUTUBE_BITRATE:-4500k}" # NEW: Variable for YouTube Upload Quality
+YOUTUBE_BITRATE="${YOUTUBE_BITRATE:-4500k}"
+YOUTUBE_WIDTH="${YOUTUBE_WIDTH:-2560}"
+YOUTUBE_HEIGHT="${YOUTUBE_HEIGHT:-1440}"
+
+# SCALING_MODE is now handled in the Main Stream logic below
+SCALING_MODE="${SCALING_MODE:-fill}" 
 
 # Output Settings (Main Stream)
 VIDEO_BITRATE="${VIDEO_BITRATE:-14M}"
@@ -52,9 +57,68 @@ AD_FINAL_TR="$WORKDIR/current_ad_tr.png"
 AD_TEMP_TR="$WORKDIR/temp_ad_tr.png"
 AD_PLAYLIST_TR="$WORKDIR/ad_playlist_tr.txt"
 
+
 # ==============================================================================
 #  1. SETUP & INITIALIZATION
 # ==============================================================================
+
+# ------------------------------------------------------------------------------
+#  1.1 Auto-Download Weather Icons (Self-Healing)
+# ------------------------------------------------------------------------------
+echo "--- Checking Weather Icons ---"
+cat <<EOF > /tmp/download_icons.py
+import os
+import requests
+import sys
+
+# Configuration matches your weather.py
+DESTINATION_FOLDER = "/config/weather_icons"
+REPO_OWNER = "basmilius"
+REPO_NAME = "weather-icons"
+PATH_TO_FOLDER = "production/fill/png/512"
+GITHUB_API_URL = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{PATH_TO_FOLDER}"
+
+def run():
+    if not os.path.exists(DESTINATION_FOLDER):
+        os.makedirs(DESTINATION_FOLDER)
+    
+    if len(os.listdir(DESTINATION_FOLDER)) > 5:
+        print(f"[INFO] Icons already exist. Skipping download.")
+        return
+
+    print(f"[INFO] Icon folder is empty or missing. Downloading from GitHub...")
+    try:
+        headers = {'User-Agent': 'VantageCamBootScript'}
+        response = requests.get(GITHUB_API_URL, headers=headers, timeout=10)
+        response.raise_for_status()
+        files_data = response.json()
+        
+        png_files = [item for item in files_data if item['type'] == 'file' and item['name'].endswith('.png')]
+        
+        for item in png_files:
+            file_name = item['name']
+            download_url = item['download_url']
+            local_path = os.path.join(DESTINATION_FOLDER, file_name)
+            
+            with requests.get(download_url, stream=True, timeout=15) as r:
+                r.raise_for_status()
+                with open(local_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+        print("[SUCCESS] All icons downloaded.")
+
+    except Exception as e:
+        print(f"[ERROR] Failed to download icons: {e}")
+
+if __name__ == "__main__":
+    run()
+EOF
+python3 /tmp/download_icons.py
+rm /tmp/download_icons.py
+
+# ------------------------------------------------------------------------------
+#  1.2 Continue Normal Boot
+# ------------------------------------------------------------------------------
 echo "--- Initializing Ad Folders ---"
 mkdir -p "$ADS_BASE/topleft/DAY"
 mkdir -p "$ADS_BASE/topleft/NIGHT"
@@ -218,15 +282,17 @@ if [ -n "$YOUTUBE_KEY" ]; then
     
     (
         echo "[Stream] YouTube restreamer starting in 10s..."
+        echo "[Stream] Target Resolution: ${YOUTUBE_WIDTH}x${YOUTUBE_HEIGHT}"
         sleep 10
         
-        # GPU Scaler + Padder
-        YT_FILTERS="scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=nv12,hwupload"
+        # NOTE: WE DO NOT ZOOM HERE ANYMORE.
+        # The main stream is already fixed to 16:9, so we just scale to the target YouTube size.
+        # This keeps the overlays perfectly in the corners.
+        YT_FILTERS="scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=nv12,hwupload"
         
         while true; do
             AUDIO_MODE=$(cat "$AUDIO_MODE_FILE" 2>/dev/null || echo "muted")
             
-            # Note: We now pull ONLY from localhost (which has synced audio+video)
             if [ "$AUDIO_MODE" = "unmuted" ]; then
                 echo "[Stream] YouTube: LIVE AUDIO (Synced)"
                 ffmpeg -hide_banner -loglevel error \
@@ -264,8 +330,21 @@ fi
 # ==============================================================================
 echo "--- Starting Main Stream ---"
 
+# FIX: Force the "Canvas" to be 16:9 (2560x1440)
+# We apply the crop/fill logic HERE, to the camera input ONLY.
+
+if [ "$SCALING_MODE" = "fill" ]; then
+    # FILL MODE: Scale to zoom (increase), then crop.
+    # Fixed syntax: flags=bicubic is now attached to scale with a colon
+    CAMERA_FILTER="[0:v]scale=2560:1440:force_original_aspect_ratio=increase:flags=bicubic,crop=2560:1440,format=yuv420p[base]"
+else
+    # FIT MODE: Scale to fit (decrease), then pad.
+    # Fixed syntax: flags=bicubic is now attached to scale with a colon
+    CAMERA_FILTER="[0:v]scale=2560:1440:force_original_aspect_ratio=decrease:flags=bicubic,pad=2560:1440:(ow-iw)/2:(oh-ih)/2,format=yuv420p[base]"
+fi
+
 INPUTS="-thread_queue_size 1024 -rtsp_transport tcp -i $RTSP_SOURCE"
-FILTER_CHAIN="[0:v]scale=3840:-1:flags=bicubic,format=yuv420p[base]"
+FILTER_CHAIN="$CAMERA_FILTER"
 LAST_V="base"
 INPUT_COUNT=1
 
@@ -300,7 +379,6 @@ fi
 
 FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=nv12[soft_final];[soft_final]hwupload[vfinal]"
 
-# FIX: Added '-map 0:a? -c:a copy' to pass original audio to internal server
 while true; do
     ffmpeg -hide_banner -loglevel warning -init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va \
     $INPUTS \
