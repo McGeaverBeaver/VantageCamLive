@@ -1,65 +1,71 @@
 #!/bin/bash
-#===============================================================================
-# YouTube Live Status Redirector
-# 
-# Automatically redirects visitors to your YouTube live stream when you're live,
-# or to a fallback URL when offline. Works reliably on all devices including iOS.
+
+# ==============================================================================
+# SCRIPT: Universal YouTube Live Redirector
+# DESCRIPTION: Checks if a YouTube channel is live. 
+#              - If LIVE: Generates an HTML file redirecting to the stream.
+#              - If OFFLINE: Generates an HTML file redirecting to a fallback URL.
 #
-# Setup:
-#   1. Fill in the configuration variables below
-#   2. Make executable: chmod +x live-redirector.sh
-#   3. Add to crontab to run every 1-2 minutes:
-#      */2 * * * * /path/to/live-redirector.sh
-#
-#===============================================================================
+# USAGE: 
+#   1. Edit the "CONFIGURATION" section below.
+#   2. Run script via Cron (e.g., every 5 mins) or Unraid User Scripts.
+# ==============================================================================
 
-#-------------------------------------------------------------------------------
-# CONFIGURATION - Edit these values
-#-------------------------------------------------------------------------------
+# --- 1. CONFIGURATION (REQUIRED) ---
 
-# Your YouTube channel ID (found in your channel URL)
-# Example: https://www.youtube.com/channel/UCwTCdAM6EAIDHKNtGaXsYAg
-CHANNEL_ID="YOUR_CHANNEL_ID_HERE"
+# Your YouTube Channel ID (Found in your URL: youtube.com/channel/UC-xxxx...)
+YT_CHANNEL_ID="YOUR_CHANNEL_ID_HERE"
 
-# Where to redirect when OFFLINE (your website, social media, etc.)
-FALLBACK_URL="https://your-fallback-site.com"
+# The URL to send visitors to when the stream is OFFLINE
+FALLBACK_URL="https://your-website.com"
 
-# Where to save the generated HTML file
-OUTPUT_FILE="/var/www/html/index.html"
+# The full path where the HTML file should be saved
+# Example for Unraid/Swag: "/mnt/cache/appdata/swag/config/www/live/index.html"
+OUTPUT_FILE="/path/to/your/webroot/index.html"
 
-# Button colors (hex codes)
-LIVE_COLOR="#ff0000"      # Red when live
-OFFLINE_COLOR="#444444"   # Gray when offline
+# --- 2. CUSTOMIZATION (OPTIONAL) ---
 
-# Page title shown in browser tab
-PAGE_TITLE="Redirecting..."
+# Title that appears in the browser tab
+PAGE_TITLE="Live Stream Redirect"
 
-#-------------------------------------------------------------------------------
-# DO NOT EDIT BELOW THIS LINE
-#-------------------------------------------------------------------------------
+# Message shown while redirecting to the stream
+MSG_LIVE="Stream is LIVE! Redirecting you now..."
 
-# Build URLs from channel ID
-CHANNEL_URL="https://www.youtube.com/channel/${CHANNEL_ID}"
-LIVE_URL="https://www.youtube.com/channel/${CHANNEL_ID}/live"
+# Message shown while redirecting to the fallback website
+MSG_OFFLINE="Stream is currently offline. Taking you to the gallery..."
 
-# Ensure output directory exists
-mkdir -p "$(dirname "$OUTPUT_FILE")"
+# --- 3. INTERNAL LOGIC (DO NOT EDIT BELOW) ---
 
-# Fetch YouTube channel page
+CHANNEL_URL="https://www.youtube.com/channel/${YT_CHANNEL_ID}"
+LIVE_URL="https://www.youtube.com/channel/${YT_CHANNEL_ID}/live"
+
+# Ensure the directory exists before writing
+if ! mkdir -p "$(dirname "$OUTPUT_FILE")"; then
+    echo "Error: Could not create directory for $OUTPUT_FILE"
+    echo "Check your permissions or file path."
+    exit 1
+fi
+
+# Fetch YouTube Channel Page
+echo "Checking status for Channel ID: $YT_CHANNEL_ID..."
 CONTENT=$(curl -s -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "$CHANNEL_URL")
 
-# Check for live status
+# Logic: Look for the specific "text":"LIVE" marker in the HTML source
 if echo "$CONTENT" | grep -q '"text":"LIVE"'; then
     TARGET="$LIVE_URL"
     STATUS="LIVE"
-    COLOR="$LIVE_COLOR"
+    COLOR="#ff0000" # YouTube Red
+    MESSAGE="$MSG_LIVE"
+    echo " -> Channel is LIVE. Targeting: $LIVE_URL"
 else
     TARGET="$FALLBACK_URL"
     STATUS="OFFLINE"
-    COLOR="$OFFLINE_COLOR"
+    COLOR="#666666" # Grey
+    MESSAGE="$MSG_OFFLINE"
+    echo " -> Channel is OFFLINE. Targeting: $FALLBACK_URL"
 fi
 
-# Generate HTML redirect page
+# Generate the HTML Redirect File
 cat > "$OUTPUT_FILE" <<EOF
 <!DOCTYPE html>
 <html lang="en">
@@ -67,46 +73,24 @@ cat > "$OUTPUT_FILE" <<EOF
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>${PAGE_TITLE}</title>
+    <meta http-equiv="refresh" content="0;url=${TARGET}">
     <style>
-        body {
-            background: #111;
-            color: #eee;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            margin: 0;
-        }
-        .status {
-            font-size: 1.2em;
-            margin-bottom: 10px;
-        }
-        .btn {
-            background: ${COLOR};
-            color: white;
-            padding: 15px 30px;
-            text-decoration: none;
-            border-radius: 5px;
-            margin-top: 20px;
-            transition: opacity 0.2s;
-        }
-        .btn:hover {
-            opacity: 0.9;
-        }
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{background:#111;color:#eee;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px}
+        .status{font-size:1.2rem;margin-bottom:10px}
+        .badge{display:inline-block;background:${COLOR};padding:4px 12px;border-radius:4px;font-weight:bold;font-size:0.9rem;color:#fff}
+        .message{color:#aaa;margin:15px 0}
+        .btn{display:inline-block;background:${COLOR};color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:500;transition:opacity 0.2s}
+        .btn:hover{opacity:0.85}
     </style>
-    <script>
-        window.location.replace("${TARGET}");
-    </script>
-    <meta http-equiv="refresh" content="1;url=${TARGET}">
 </head>
 <body>
-    <p class="status">Status: <strong>${STATUS}</strong></p>
-    <p>Redirecting...</p>
+    <p class="status">Status: <span class="badge">${STATUS}</span></p>
+    <p class="message">${MESSAGE}</p>
     <a href="${TARGET}" class="btn">Click here if not redirected</a>
+    <script>window.location.replace("${TARGET}");</script>
 </body>
 </html>
 EOF
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Status: ${STATUS} -> ${TARGET}"
+echo "Success: Updated $OUTPUT_FILE"
