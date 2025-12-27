@@ -43,8 +43,22 @@ DAY_START_HOUR="${DAY_START_HOUR:-6}"
 DAY_END_HOUR="${DAY_END_HOUR:-20}"
 ADS_BASE="/config/ads"
 
+# Flashing settings for red warnings
+FLASH_ON_DURATION="${FLASH_ON_DURATION:-0.7}"   # Seconds "on" state shown
+FLASH_OFF_DURATION="${FLASH_OFF_DURATION:-0.3}" # Seconds "off" (dimmed) state shown
+
+# Direct-to-YouTube mode: Skip MediaMTX when only streaming to YouTube
+# This saves CPU by eliminating the internal RTSP encode/decode cycle
+if [ -n "$YOUTUBE_KEY" ] && [ "$ENABLE_LOCAL_STREAM" != "true" ]; then
+    DIRECT_YOUTUBE_MODE="true"
+else
+    DIRECT_YOUTUBE_MODE="false"
+fi
+
 # Paths
 WEATHER_COMBINED="$WORKDIR/weather_combined.png"  # Combined weather+alerts
+WEATHER_COMBINED_FLASH="$WORKDIR/weather_combined_flash.png"  # Flash frame
+WEATHER_META="$WORKDIR/weather_combined_meta.txt"  # Metadata from Python
 WEATHER_LIST="$WORKDIR/weather_list.txt"
 WEATHER_TEMP="$WORKDIR/weather_temp.png"
 
@@ -95,6 +109,46 @@ check_vaapi() {
     fi
 }
 
+# Update weather playlist based on flash state
+update_weather_playlist() {
+    local needs_flash=$1
+    
+    if [ "$needs_flash" = "1" ] && [ -f "$WEATHER_COMBINED_FLASH" ]; then
+        # Flashing playlist - alternates between on and off states
+        cat > "$WEATHER_LIST" <<EOF
+file '$WEATHER_COMBINED'
+duration $FLASH_ON_DURATION
+file '$WEATHER_COMBINED_FLASH'
+duration $FLASH_OFF_DURATION
+file '$WEATHER_COMBINED'
+duration $FLASH_ON_DURATION
+file '$WEATHER_COMBINED_FLASH'
+duration $FLASH_OFF_DURATION
+file '$WEATHER_COMBINED'
+duration $FLASH_ON_DURATION
+file '$WEATHER_COMBINED_FLASH'
+duration $FLASH_OFF_DURATION
+file '$WEATHER_COMBINED'
+duration $FLASH_ON_DURATION
+file '$WEATHER_COMBINED_FLASH'
+duration $FLASH_OFF_DURATION
+file '$WEATHER_COMBINED'
+duration $FLASH_ON_DURATION
+file '$WEATHER_COMBINED_FLASH'
+duration $FLASH_OFF_DURATION
+file '$WEATHER_COMBINED'
+EOF
+        log "[Weather] Flashing playlist enabled for RED WARNING"
+    else
+        # Standard non-flashing playlist
+        cat > "$WEATHER_LIST" <<EOF
+file '$WEATHER_COMBINED'
+duration 10
+file '$WEATHER_COMBINED'
+EOF
+    fi
+}
+
 # ==============================================================================
 #  1. SETUP & INITIALIZATION
 # ==============================================================================
@@ -130,14 +184,30 @@ log "--- Initializing Ad Folders ---"
 mkdir -p "$ADS_BASE/topleft/DAY" "$ADS_BASE/topleft/NIGHT"
 mkdir -p "$ADS_BASE/topright/DAY" "$ADS_BASE/topright/NIGHT"
 
-log "--- Configuring RTSP Server ---"
-if [ "$ENABLE_LOCAL_STREAM" = "true" ]; then RTSP_ADDRESS=":8554"; else RTSP_ADDRESS="127.0.0.1:8554"; fi
+log "--- Configuring Stream Output ---"
+if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
+    log "Direct-to-YouTube mode enabled (skipping MediaMTX for efficiency)"
+else
+    log "MediaMTX mode enabled (local stream available)"
+    if [ "$ENABLE_LOCAL_STREAM" = "true" ]; then RTSP_ADDRESS=":8554"; else RTSP_ADDRESS="127.0.0.1:8554"; fi
 
-cat <<EOF > /usr/local/bin/mediamtx.yml
+    cat <<EOF > /usr/local/bin/mediamtx.yml
+# RTSP - Primary protocol (required)
 rtspAddress: $RTSP_ADDRESS
 readTimeout: 60s
 writeTimeout: 60s
+
+# Disable unused protocols to save resources
+rtmpDisable: yes
+hlsDisable: yes
+webrtcDisable: yes
+srtDisable: yes
+
+# API for health checks
 api: yes
+apiAddress: 127.0.0.1:9997
+
+# Authentication
 authMethod: internal
 authInternalUsers:
   - user: $ADMIN_USER
@@ -147,8 +217,9 @@ paths:
   all:
 EOF
 
-/usr/local/bin/mediamtx /usr/local/bin/mediamtx.yml &
-sleep 2
+    /usr/local/bin/mediamtx /usr/local/bin/mediamtx.yml &
+    sleep 2
+fi
 
 if [ -n "$YOUTUBE_KEY" ]; then
     python3 /audio_api.py &
@@ -156,11 +227,9 @@ if [ -n "$YOUTUBE_KEY" ]; then
 fi
 
 log "--- Initializing Placeholders ---"
-# Combined Weather+Alerts (900x500 = 350 weather + 150 alerts)
+# Combined Weather+Alerts (900x500 = 350 weather + 150 alerts max)
 if [ ! -f "$WEATHER_COMBINED" ]; then python3 /weather.py blank "$WEATHER_COMBINED" "900" "500"; fi
-echo "file '$WEATHER_COMBINED'" > "$WEATHER_LIST"
-echo "duration 10" >> "$WEATHER_LIST"
-echo "file '$WEATHER_COMBINED'" >> "$WEATHER_LIST"
+update_weather_playlist "0"
 
 # Ads
 python3 /weather.py blank "$AD_FINAL_TL" "$SCALE_ADS_TL" "$SCALE_ADS_TL"
@@ -229,21 +298,57 @@ get_mode() {
     done
 ) &
 
-# --- Weather & Alert Manager (Combined) ---
+# --- Weather & Alert Manager (Combined with Flashing Support) ---
 if [ "$WEATHER_ENABLED" = "true" ]; then
     (
         sleep 5 
         while true; do
             # Generate combined weather+alerts overlay
             python3 /weather.py combined "$WEATHER_TEMP"
-            if [ -f "$WEATHER_TEMP" ]; then mv -f "$WEATHER_TEMP" "$WEATHER_COMBINED"; fi
-            sleep "$ALERTS_UPDATE_INTERVAL"
+            
+            if [ -f "$WEATHER_TEMP" ]; then 
+                mv -f "$WEATHER_TEMP" "$WEATHER_COMBINED"
+                
+                # Check for flash frame
+                FLASH_TEMP="${WEATHER_TEMP%.png}_flash.png"
+                if [ -f "$FLASH_TEMP" ]; then
+                    mv -f "$FLASH_TEMP" "$WEATHER_COMBINED_FLASH"
+                else
+                    # Remove old flash frame if no longer needed
+                    rm -f "$WEATHER_COMBINED_FLASH"
+                fi
+                
+                # Read metadata and update playlist
+                META_TEMP="${WEATHER_TEMP%.png}_meta.txt"
+                if [ -f "$META_TEMP" ]; then
+                    NEEDS_FLASH=$(grep "needs_flash=" "$META_TEMP" | cut -d'=' -f2)
+                    IS_STATEMENT=$(grep "is_statement=" "$META_TEMP" | cut -d'=' -f2)
+                    
+                    # Update playlist based on flash state
+                    update_weather_playlist "$NEEDS_FLASH"
+                    
+                    if [ "$IS_STATEMENT" = "1" ]; then
+                        log "[Weather] Statement alert active (compact display)"
+                    fi
+                    
+                    mv -f "$META_TEMP" "$WEATHER_META"
+                fi
+            fi
+            
+            # For flashing alerts, update more frequently
+            NEEDS_FLASH=$(grep "needs_flash=" "$WEATHER_META" 2>/dev/null | cut -d'=' -f2)
+            if [ "$NEEDS_FLASH" = "1" ]; then
+                # Update every 60 seconds for active warnings (keep flash fresh)
+                sleep 60
+            else
+                sleep "$ALERTS_UPDATE_INTERVAL"
+            fi
         done
     ) &
 fi
 
-# YouTube Restreamer
-if [ -n "$YOUTUBE_KEY" ]; then
+# YouTube Restreamer - Only needed when using MediaMTX (not in direct mode)
+if [ -n "$YOUTUBE_KEY" ] && [ "$DIRECT_YOUTUBE_MODE" != "true" ]; then
     echo "muted" > "/config/audio_mode"
     (
         sleep 10
@@ -283,10 +388,15 @@ if [ -n "$YOUTUBE_KEY" ]; then
     ) &
 fi
 
+# Initialize audio mode for direct mode
+if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
+    echo "muted" > "/config/audio_mode"
+fi
+
 # ==============================================================================
 #  3. MAIN STREAM ENCODING
 # ==============================================================================
-log "--- Starting Main Stream (Hardware: $HARDWARE_ACCEL) ---"
+log "--- Starting Main Stream (Hardware: $HARDWARE_ACCEL, Direct YouTube: $DIRECT_YOUTUBE_MODE) ---"
 
 if [ "$SCALING_MODE" = "fill" ]; then
     CAMERA_FILTER="[0:v]scale=2560:1440:force_original_aspect_ratio=increase:flags=bicubic,crop=2560:1440,format=yuv420p[base]"
@@ -321,31 +431,98 @@ add_overlay "$AD_PLAYLIST_TL" "tl" "$SCALE_ADS_TL" ""
 add_overlay "$AD_PLAYLIST_TR" "tr" "$SCALE_ADS_TR" ""
 
 if [ "$WEATHER_ENABLED" = "true" ]; then 
-    # Single combined weather+alerts overlay (reduced from 2 to 1)
+    # Single combined weather+alerts overlay
+    # Fixed height: 500px (150 alert + 350 weather) - never changes to prevent FFmpeg crashes
     add_overlay "$WEATHER_LIST" "br" "900" "500"
 fi
 
-if [ "$HARDWARE_ACCEL" = "true" ]; then
-    # Hardware encoding path
-    FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=nv12[soft_final];[soft_final]hwupload[vfinal]"
-    HW_INIT="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
-    VIDEO_CODEC="-c:v h264_vaapi -b:v $VIDEO_BITRATE -maxrate $VIDEO_BITRATE -bufsize 28M -r $VIDEO_FPS -g $(($VIDEO_FPS * 2))"
-else
-    # Software encoding path
-    FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=yuv420p[vfinal]"
-    HW_INIT=""
-    VIDEO_CODEC="-c:v libx264 -preset $SOFTWARE_PRESET -crf $SOFTWARE_CRF -b:v $VIDEO_BITRATE -maxrate $VIDEO_BITRATE -bufsize 28M -r $VIDEO_FPS -g $(($VIDEO_FPS * 2))"
-fi
-
-while true; do
-    ffmpeg -hide_banner -loglevel warning $HW_INIT \
-    $INPUTS \
-    -filter_complex "$FINAL_FILTERS" \
-    -map "[vfinal]" -map 0:a? \
-    $VIDEO_CODEC \
-    -c:a copy \
-    -f rtsp -rtsp_transport tcp "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live"
+# ==============================================================================
+#  DIRECT-TO-YOUTUBE MODE (Single FFmpeg, no MediaMTX)
+# ==============================================================================
+if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
+    log "--- Direct YouTube Mode: Single FFmpeg pipeline ---"
     
-    log "FFmpeg exited, restarting in 5 seconds..."
-    sleep 5
-done
+    while true; do
+        AUDIO_MODE=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
+        
+        if [ "$HARDWARE_ACCEL" = "true" ]; then
+            FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=nv12[soft_final];[soft_final]hwupload[vfinal]"
+            HW_INIT="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
+            VIDEO_CODEC="-c:v h264_vaapi -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60"
+        else
+            FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=yuv420p[vfinal]"
+            HW_INIT=""
+            VIDEO_CODEC="-c:v libx264 -preset $SOFTWARE_PRESET -crf $SOFTWARE_CRF -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60"
+        fi
+        
+        if [ "$AUDIO_MODE" = "unmuted" ]; then
+            # Use camera audio
+            ffmpeg -hide_banner -loglevel warning $HW_INIT \
+                $INPUTS \
+                -filter_complex "$FINAL_FILTERS" \
+                -map "[vfinal]" -map 0:a? \
+                $VIDEO_CODEC \
+                -c:a aac -b:a 128k -ac 2 \
+                -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" &
+        else
+            # Muted - use silent audio
+            ffmpeg -hide_banner -loglevel warning $HW_INIT \
+                $INPUTS \
+                -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
+                -filter_complex "$FINAL_FILTERS" \
+                -map "[vfinal]" -map $((INPUT_COUNT)):a \
+                $VIDEO_CODEC \
+                -c:a aac -b:a 128k \
+                -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" &
+        fi
+        
+        FFMPEG_PID=$!
+        echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
+        
+        # Wait for FFmpeg OR audio mode change
+        while kill -0 $FFMPEG_PID 2>/dev/null; do
+            NEW_MODE=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
+            if [ "$NEW_MODE" != "$AUDIO_MODE" ]; then
+                log "[Audio] Mode changed to $NEW_MODE, restarting stream..."
+                kill $FFMPEG_PID 2>/dev/null
+                sleep 2
+                break
+            fi
+            sleep 1
+        done
+        
+        # If FFmpeg died on its own, wait a bit before restart
+        if ! kill -0 $FFMPEG_PID 2>/dev/null; then
+            wait $FFMPEG_PID 2>/dev/null
+            log "FFmpeg exited, restarting in 5 seconds..."
+            sleep 5
+        fi
+    done
+
+# ==============================================================================
+#  MEDIAMTX MODE (Two FFmpeg processes - encoder + restreamer)
+# ==============================================================================
+else
+    if [ "$HARDWARE_ACCEL" = "true" ]; then
+        FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=nv12[soft_final];[soft_final]hwupload[vfinal]"
+        HW_INIT="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
+        VIDEO_CODEC="-c:v h264_vaapi -b:v $VIDEO_BITRATE -maxrate $VIDEO_BITRATE -bufsize 28M -r $VIDEO_FPS -g $(($VIDEO_FPS * 2))"
+    else
+        FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=yuv420p[vfinal]"
+        HW_INIT=""
+        VIDEO_CODEC="-c:v libx264 -preset $SOFTWARE_PRESET -crf $SOFTWARE_CRF -b:v $VIDEO_BITRATE -maxrate $VIDEO_BITRATE -bufsize 28M -r $VIDEO_FPS -g $(($VIDEO_FPS * 2))"
+    fi
+
+    while true; do
+        ffmpeg -hide_banner -loglevel warning $HW_INIT \
+        $INPUTS \
+        -filter_complex "$FINAL_FILTERS" \
+        -map "[vfinal]" -map 0:a? \
+        $VIDEO_CODEC \
+        -c:a copy \
+        -f rtsp -rtsp_transport tcp "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live"
+        
+        log "FFmpeg exited, restarting in 5 seconds..."
+        sleep 5
+    done
+fi
