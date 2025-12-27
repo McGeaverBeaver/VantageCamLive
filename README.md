@@ -1,4 +1,4 @@
-# Vantage Cam Live v2.2
+# Vantage Cam Live v2.5
 **OpenSource Automated Live Stream Broadcaster with Weather & Smart Alerts**
 
 See a demo @ [https://simcoelocal.ca/](https://simcoelocal.ca/)
