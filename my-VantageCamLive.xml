@@ -17,7 +17,6 @@
   <ExtraParams>--restart=unless-stopped</ExtraParams>
   <PostArgs/>
   <CPUset/>
-  <DateInstalled>1766530859</DateInstalled>
   <DonateText/>
   <DonateLink/>
   <Requires/>
@@ -35,20 +34,24 @@
   <Config Name="GPU Device" Target="/dev/dri" Default="" Mode="" Description="Intel GPU Passthrough" Type="Device" Display="always" Required="true" Mask="false">/dev/dri</Config>
   <Config Name="Video Bitrate" Target="VIDEO_BITRATE" Default="14M" Mode="" Description="Quality of output stream (e.g. 4M to 14M)" Type="Variable" Display="always" Required="false" Mask="false">14M</Config>
   <Config Name="Appdata Path" Target="/config" Default="/mnt/user/appdata/vantagecam" Mode="rw" Description="Folder for weather icons and ad images" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/vantagecam</Config>
-  <Config Name="Weather Latitude" Target="WEATHER_LAT" Default="" Mode="" Description="Your Latitude" Type="Variable" Display="always" Required="true" Mask="false">40.7128</Config>
-  <Config Name="Weather Longitude" Target="WEATHER_LON" Default="" Mode="" Description="Your Longitude" Type="Variable" Display="always" Required="true" Mask="false">-74.0060</Config>
+  
+  <Config Name="Weather Latitude" Target="WEATHER_LAT" Default="" Mode="" Description="Your Latitude (Used for Weather &amp; Alerts)" Type="Variable" Display="always" Required="true" Mask="false">40.7128</Config>
+  <Config Name="Weather Longitude" Target="WEATHER_LON" Default="" Mode="" Description="Your Longitude (Used for Weather &amp; Alerts)" Type="Variable" Display="always" Required="true" Mask="false">-74.0060</Config>
   <Config Name="Weather Timezone" Target="WEATHER_TIMEZONE" Default="America/New_York" Mode="" Description="Important for Day/Night logic" Type="Variable" Display="always" Required="true" Mask="false">America/New_York</Config>
   <Config Name="Weather Location Label" Target="WEATHER_LOCATION" Default="CITY NAME" Mode="" Description="The name shown on the overlay" Type="Variable" Display="always" Required="false" Mask="false">NEW YORK</Config>
-  <Config Name="TL Ad Width" Target="SCALE_TL" Default="500" Mode="" Description="Size of TL ads" Type="Variable" Display="always" Required="false" Mask="false">500</Config>
+  <Config Name="Camera Heading" Target="CAMERA_HEADING" Default="N" Mode="" Description="Direction camera is facing (N, NE, E, SE, S, SW, W, NW). Used to rotate wind arrow." Type="Variable" Display="always" Required="false" Mask="false">N</Config>
+  
+  <Config Name="Alerts/Weather Refresh Interval (Seconds)" Target="ALERTS_UPDATE_INTERVAL" Default="900" Mode="" Description="How often to fetch new data (e.g. 900 = 15 mins). Display is permanent while alert is active." Type="Variable" Display="always" Required="false" Mask="false">900</Config>
+  
+  <Config Name="Weather Debug Mode" Target="WEATHER_DEBUG" Default="false" Mode="" Description="Set to 'true' to create detailed logs in /config/weather_debug.log" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+
+  <Config Name="TL Ad Width" Target="SCALE_TL" Default="500" Mode="" Description="Size of Top-Left ads" Type="Variable" Display="always" Required="false" Mask="false">500</Config>
   <Config Name="TL Rotation Timer" Target="OVERLAYAD_ROTATE_TIMER" Default="30" Mode="" Description="Seconds per ad" Type="Variable" Display="always" Required="false" Mask="false">30</Config>
-  <Config Name="TR Ad Width" Target="SCALE_TR" Default="400" Mode="" Description="Size of TR popup" Type="Variable" Display="always" Required="false" Mask="false">400</Config>
+  <Config Name="TR Ad Width" Target="SCALE_TR" Default="400" Mode="" Description="Size of Top-Right popup" Type="Variable" Display="always" Required="false" Mask="false">400</Config>
   <Config Name="TR Show Seconds" Target="TR_SHOW_SECONDS" Default="20" Mode="" Description="Duration visible" Type="Variable" Display="always" Required="false" Mask="false">20</Config>
   <Config Name="TR Hide Seconds" Target="TR_HIDE_SECONDS" Default="300" Mode="" Description="Duration hidden" Type="Variable" Display="always" Required="false" Mask="false">300</Config>
   <Config Name="Day Start Hour" Target="DAY_START_HOUR" Default="6" Mode="" Description="0-23 format" Type="Variable" Display="always" Required="false" Mask="false">6</Config>
   <Config Name="Day End Hour" Target="DAY_END_HOUR" Default="18" Mode="" Description="0-23 format" Type="Variable" Display="always" Required="false" Mask="false">18</Config>
   <Config Name="Audio API Key" Target="AUDIO_API_KEY" Default="" Mode="" Description="Optional password for Audio API" Type="Variable" Display="always" Required="false" Mask="true"></Config>
-  <Config Name="YouTube Width" Target="YOUTUBE_WIDTH" Default="2560" Mode="" Description="Video width" Type="Variable" Display="always" Required="false" Mask="false">2560</Config>
-  <Config Name="YouTube Height" Target="YOUTUBE_HEIGHT" Default="1440" Mode="" Description="Video height" Type="Variable" Display="always" Required="false" Mask="false">1440</Config>
-  <Config Name="Scaling Mode" Target="SCALING_MODE" Default="fill" Mode="" Description="'fill' = Zoom to remove black bars (Fixes windowboxing). 'fit' = Fit inside (Adds bars)." Type="Variable" Display="always" Required="false" Mask="false">fill</Config>
-  <TailscaleStateDir/>
+  <Config Name="Scaling Mode" Target="SCALING_MODE" Default="fill" Mode="" Description="'fill' = Zoom to remove black bars. 'fit' = Fit inside." Type="Variable" Display="always" Required="false" Mask="false">fill</Config>
 </Container>

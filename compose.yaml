@@ -19,6 +19,15 @@ services:
       - WEATHER_LON=-74.0060
       - WEATHER_LOCATION=My City
       - WEATHER_TIMEZONE=America/New_York
+      - CAMERA_HEADING=E
+      
+      # --- ALERT REFRESH RATE ---
+      # How often to check Env-Canada & OpenMeteo for new data (in seconds).
+      # Default: 900 (15 Minutes)
+      - ALERTS_UPDATE_INTERVAL=900
+      
+      # --- DEBUGGING ---
+      - WEATHER_DEBUG=true
       
       # --- YOUTUBE SETTINGS (Optional) ---
       - YOUTUBE_URL=rtmp://a.rtmp.youtube.com/live2

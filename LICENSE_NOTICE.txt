@@ -25,16 +25,15 @@ By using this container, you agree to the terms below.
       - Python 3 (PSF License)
       - Pillow (HPND License)
       - Requests (Apache 2.0 License)
+      - env_canada (MIT License)
+      - geopy (MIT License)
+      - aiohttp (Apache 2.0 License)
 
-   D. Weather Data
-      Weather data is provided by Open-Meteo.com.
-      Usage is subject to the Creative Commons Attribution 4.0 (CC BY 4.0).
-      Start-up logs and documentation for this project provide attribution 
-      to Open-Meteo.
-
-   E. Weather Icons
-      Weather icons are provided by Bas Milius (https://github.com/basmilius/weather-icons).
-      Licensed under the MIT License.
+   D. Weather & Alert Data
+      - Open-Meteo.com: Usage is subject to the Creative Commons Attribution 
+        4.0 (CC BY 4.0).
+      - Environment and Climate Change Canada: Contains information licensed 
+        under the Open Government Licence – Canada.
 
 3. LIMITATION OF LIABILITY
    In no event shall the authors or copyright holders be liable for any claim, 
@@ -44,4 +43,5 @@ By using this container, you agree to the terms below.
 
 4. YOUTUBE TERMS OF SERVICE
    If using this software to stream to YouTube, you agree to be bound by the 
-   YouTube Terms of Service. This software is not affiliated with Google or YouTube.
+   YouTube Terms of Service.
+   This software is not affiliated with Google or YouTube.
