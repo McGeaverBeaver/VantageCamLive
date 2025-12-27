@@ -14,7 +14,7 @@ Transform a standard security camera feed into a professional broadcast without 
 ---
 ### 🌟 Key Features
 
-* **Resolution Unlocked:** Stream in crisp **1440p (2K)** by default, or configure for 1080p/4K. No longer limited to low-res streams.
+* **Resolution Unlocked:** Stream in crisp **1440p (2K)** by default, or configure for 1080p/4K.
 * **Smart Scaling Engine:** The new `SCALING_MODE` automatically zooms and crops 4:3 camera signals to fill a 16:9 frame, eliminating "windowboxing" (black bars).
 * **Live Weather Overlay:** Real-time local weather updates powered by Open-Meteo with **Self-Healing Assets** (icons are automatically downloaded/repaired on boot).
 * **🚨 Smart Alert Stacking:**
