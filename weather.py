@@ -561,12 +561,16 @@ def generate_alert_layer(width=900, height=150, flash_state="on"):
 
         # Layout depends on alert type
         if is_statement:
-            # Compact layout for statements (draws in top half)
-            f_icon = get_font(35)
-            draw.text((15, 20), "\u26A0", font=f_icon, fill=text_fill)
+            # Compact layout for statements (75px content height)
+            # Layout: Row 1: [?] [Warning Text centered]
+            #         Row 2: [Region left] ... [UPDATED: time right]
             
-            max_w = width - 80
-            font_size = 32
+            f_icon = get_font(30)
+            draw.text((12, 12), "\u26A0", font=f_icon, fill=text_fill)
+            
+            # Row 1: Warning text
+            max_w = width - 70
+            font_size = 30
             f_warn = get_font(font_size)
             
             while f_warn.getlength(warning_text) > max_w and font_size > 16:
@@ -575,9 +579,30 @@ def generate_alert_layer(width=900, height=150, flash_state="on"):
             
             warn_bbox = draw.textbbox((0, 0), warning_text, font=f_warn)
             warn_w = warn_bbox[2] - warn_bbox[0]
-            warn_x = max(60, 450 - (warn_w / 2))
-            warn_y = (content_height - (warn_bbox[3] - warn_bbox[1])) // 2
-            draw.text((warn_x, warn_y), warning_text, font=f_warn, fill=text_fill)
+            warn_x = max(50, (width - warn_w) // 2)
+            draw.text((warn_x, 10), warning_text, font=f_warn, fill=text_fill)
+            
+            # Row 2: Region (left) and Updated time (right)
+            f_small = get_font(18)
+            
+            # Region text on left
+            if region_text:
+                draw.text((50, 48), region_text, font=f_small, fill=text_fill)
+            
+            # Updated time on right - extract just the time from issued_text
+            if issued_text:
+                issued_text = re.sub(r'<[^>]+>', '', issued_text).strip()
+                # Try to extract just the time portion (e.g., "8:12 PM" from "Issued: 8:12 PM EST Friday...")
+                time_match = re.search(r'(\d{1,2}:\d{2}\s*(?:AM|PM)?)', issued_text, re.IGNORECASE)
+                if time_match:
+                    short_time = f"UPDATED: {time_match.group(1)}"
+                else:
+                    # Fallback: just use first 20 chars
+                    short_time = issued_text[:20] if len(issued_text) > 20 else issued_text
+                
+                ts_bbox = draw.textbbox((0, 0), short_time, font=f_small)
+                ts_w = ts_bbox[2] - ts_bbox[0]
+                draw.text((width - ts_w - 20, 48), short_time, font=f_small, fill=text_fill)
             
         else:
             # Full layout for warnings/watches
