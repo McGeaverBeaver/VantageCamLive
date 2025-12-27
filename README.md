@@ -1,4 +1,4 @@
-# Vantage Cam Live v2.6
+# Vantage Cam Live v2.7
 **OpenSource Automated Live Stream Broadcaster with Weather & Smart Alerts**
 
 See a demo @ [https://simcoelocal.ca/](https://simcoelocal.ca/)
@@ -17,15 +17,17 @@ Transform a standard security camera feed into a professional broadcast without 
 * **Resolution Unlocked:** Stream in crisp **1440p (2K)** by default, or configure for 1080p/4K.
 * **Smart Scaling Engine:** The `SCALING_MODE` automatically zooms and crops 4:3 camera signals to fill a 16:9 frame, eliminating "windowboxing" (black bars).
 * **Live Weather Overlay:** Real-time local weather updates powered by Open-Meteo with **Self-Healing Assets** (icons are automatically downloaded/repaired on boot).
-* **🚨 Smart Alert Stacking:**
-    * **Dynamic Layout:** Weather alerts (Environment Canada / NWS) now stack cleanly **on top** of the weather widget, creating a unified information column that keeps your camera view clear.
+* **🚨 Smart Alert System:**
+    * **Alert Classification:** Full Environment Canada alert hierarchy support - Warnings, Watches, Advisories, and Statements with proper color coding.
+    * **Flashing Red Warnings:** Extreme weather alerts (tornado, severe thunderstorm, etc.) flash to grab viewer attention.
+    * **Compact Statements:** Weather statements display at half-height to stay informative without dominating the screen.
     * **Deep Data Fetch:** Pulls detailed, region-specific warning titles directly from official XML feeds.
-    * **Issued Timestamps:** Alerts display the official "Issued" time (e.g., *"Issued: 8:12 PM EST Friday..."*) with dynamic text scaling to fit perfectly.
-    * **High Contrast:** Warnings use high-visibility color schemes (e.g., Black text on Golden Yellow) and auto-scale to fit the box perfectly.
+    * **Issued Timestamps:** Alerts display the official "Issued" time with dynamic text scaling.
 * **🔧 Flexible Encoding:**
     * **Hardware Mode (Default):** Uses Intel QuickSync via VAAPI for minimal CPU usage.
     * **Software Mode:** Falls back to x264 encoding for systems without Intel GPUs.
     * **Auto-Fallback:** Automatically switches to software mode if VAAPI initialization fails.
+* **🚀 Direct-to-YouTube Mode:** When streaming only to YouTube, runs a single optimized FFmpeg pipeline - no intermediate RTSP server needed. Saves CPU and RAM automatically.
 * **Dynamic Sponsor System:** "Watch folders" allow you to drag-and-drop sponsor logos for automatic rotation (Day/Night support) without restarting the stream.
 * **Audio Control API:** Mute or unmute your stream remotely using simple web commands.
 
@@ -83,8 +85,8 @@ services:
       # --- HARDWARE ACCELERATION (default: true) ---
       - HARDWARE_ACCEL=true
       
-      # --- LOCAL STREAM ---
-      - ENABLE_LOCAL_STREAM=true
+      # --- LOCAL STREAM (set true if you need RTSP preview) ---
+      - ENABLE_LOCAL_STREAM=false
       
       # --- WEATHER & LOCATION ---
       - WEATHER_LAT=40.7128
@@ -106,7 +108,7 @@ services:
     volumes:
       - /mnt/user/appdata/vantagecam:/config
     ports:
-      - 8554:8554 # Video Output
+      - 8554:8554 # Video Output (only needed if ENABLE_LOCAL_STREAM=true)
       - 9998:9998 # Audio API
     restart: unless-stopped
 ```
@@ -131,7 +133,7 @@ services:
       - SOFTWARE_CRF=23         # Quality: lower = better (18-28 typical)
       
       # --- LOCAL STREAM ---
-      - ENABLE_LOCAL_STREAM=true
+      - ENABLE_LOCAL_STREAM=false
       
       # --- WEATHER & LOCATION ---
       - WEATHER_LAT=40.7128
@@ -143,15 +145,52 @@ services:
       # --- ALERTS ---
       - ALERTS_UPDATE_INTERVAL=900
       
+      # --- YOUTUBE ---
+      - YOUTUBE_URL=rtmp://a.rtmp.youtube.com/live2
+      - YOUTUBE_KEY=xxxx-xxxx-xxxx-xxxx
+      
     volumes:
       - /mnt/user/appdata/vantagecam:/config
     ports:
-      - 8554:8554
-      - 9998:9998
+      - 9998:9998 # Audio API
     restart: unless-stopped
 ```
 
 > ⚠️ **Note:** Software encoding uses significantly more CPU. For 1440p streaming, expect 2-4 CPU cores at moderate-high usage depending on preset.
+
+---
+
+### 🎯 Direct-to-YouTube Mode
+
+**New in v2.7!** When streaming only to YouTube (no local preview needed), the container automatically uses an optimized single-pipeline architecture:
+
+| Mode | Architecture | When Active |
+|:-----|:-------------|:------------|
+| **Direct** | Camera → FFmpeg → YouTube | `YOUTUBE_KEY` set + `ENABLE_LOCAL_STREAM=false` |
+| **MediaMTX** | Camera → FFmpeg → RTSP → FFmpeg → YouTube | `ENABLE_LOCAL_STREAM=true` |
+
+**Direct mode benefits:**
+- ~50MB less RAM (no MediaMTX server)
+- 1-2 fewer CPU cores (no re-encoding)
+- Lower latency to YouTube
+
+Set `ENABLE_LOCAL_STREAM=true` if you need to preview the stream locally via RTSP.
+
+---
+
+### 🚨 Alert System
+
+The alert overlay supports the full Environment Canada alert hierarchy:
+
+| Alert Type | Color | Display |
+|:-----------|:------|:--------|
+| **Warning** (Extreme) | 🔴 Red + Flashing | Tornado, Severe Thunderstorm, Hurricane, Blizzard |
+| **Warning** (Moderate) | 🟠 Orange | Freezing Rain, Wind, Rainfall, Snowfall |
+| **Warning** (Minor) | 🟡 Yellow | Other warnings |
+| **Watch** | Colored + Dashed Border | Same colors as warnings |
+| **Statement** | ⚫ Grey (Compact) | Half-height display |
+
+US National Weather Service (NWS) alerts are also supported with similar severity mapping.
 
 ---
 
@@ -200,6 +239,8 @@ These variables can be added to your Docker template or Compose file to fine-tun
 | `ALERTS_UPDATE_INTERVAL` | `900` | How often (in seconds) to check for new weather/alerts data. |
 | `CAMERA_HEADING` | `N` | Rotates the wind arrow. Accepts compass direction (`N`, `NE`, `SW`) or degrees (`0`-`360`). |
 | `WEATHER_DEBUG` | `false` | Set to `true` to enable detailed logs in `/config/weather_debug.log`. |
+| `FLASH_ON_DURATION` | `0.7` | Seconds the red warning flash "on" state is visible. |
+| `FLASH_OFF_DURATION` | `0.3` | Seconds the red warning flash "off" state is visible. |
 
 #### YouTube
 
@@ -213,7 +254,7 @@ These variables can be added to your Docker template or Compose file to fine-tun
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `ENABLE_LOCAL_STREAM` | `false` | Set to `true` to enable local RTSP viewing (Port 8554). |
+| `ENABLE_LOCAL_STREAM` | `false` | Set to `true` to enable local RTSP viewing and use MediaMTX mode. |
 | `AUDIO_API_KEY` | *None* | **Recommended:** Set a password/key to secure the Audio API. |
 
 #### Sponsor Overlays
@@ -245,6 +286,18 @@ You can mute or unmute the YouTube stream remotely (e.g., via Home Assistant or 
 ---
 
 ### 📋 Changelog
+
+#### v2.7 - Direct-to-YouTube Mode & Extended Alert Classification
+* **New:** Direct-to-YouTube mode - single FFmpeg pipeline when local preview not needed
+* **New:** Extended Environment Canada alert classification (Warnings, Watches, Advisories, Statements)
+* **New:** Flashing red warnings for extreme weather alerts
+* **New:** Compact half-height display for weather statements
+* **New:** Proper color coding matching official EC alert levels
+* **New:** Dashed border pattern for Watch alerts (vs solid for Warnings)
+* **Improved:** MediaMTX disabled entirely in direct mode (saves ~50MB RAM)
+* **Improved:** Unused MediaMTX protocols disabled (RTMP, HLS, WebRTC, SRT)
+* **Fixed:** VAAPI crash when overlay dimensions changed dynamically
+* **Fixed:** Gap between compact statement bar and weather widget
 
 #### v2.6 - Optional Hardware Acceleration & Alert Timestamps
 * **New:** Optional software encoding (`HARDWARE_ACCEL=false`) - no Intel GPU required
