@@ -3,16 +3,31 @@ services:
   vantagecam:
     image: ghcr.io/mcgeaverbeaver/vantagecamlive:latest
     container_name: vantagecam
+    
+    # --- DEVICE MAPPING ---
+    # Only needed if HARDWARE_ACCEL=true (default)
+    # Comment out this section for software-only encoding
     devices:
-      - /dev/dri:/dev/dri # Intel QuickSync (Required)
+      - /dev/dri:/dev/dri
+    
     environment:
       # --- REQUIRED SETTINGS ---
       - RTSP_SOURCE=rtsp://user:pass@192.168.1.50:554/stream
       - ADMIN_USER=admin
       - ADMIN_PASS=change_me_please
       
+      # --- HARDWARE ACCELERATION ---
+      # Set to 'false' to use software encoding (no Intel GPU required)
+      - HARDWARE_ACCEL=true
+      # - VAAPI_DEVICE=/dev/dri/renderD128  # Override if needed
+      
+      # --- SOFTWARE ENCODING SETTINGS ---
+      # Only used when HARDWARE_ACCEL=false
+      # - SOFTWARE_PRESET=faster  # ultrafast|superfast|veryfast|faster|fast|medium
+      # - SOFTWARE_CRF=23         # Quality (lower = better, 18-28 typical)
+      
       # --- LOCAL STREAM SETTINGS ---
-      - ENABLE_LOCAL_STREAM=true # Set to 'false' to disable local port 8554
+      - ENABLE_LOCAL_STREAM=true
       
       # --- WEATHER SETTINGS ---
       - WEATHER_LAT=40.7128
@@ -29,13 +44,56 @@ services:
       # --- DEBUGGING ---
       - WEATHER_DEBUG=true
       
+      # --- VIDEO OUTPUT SETTINGS ---
+      # - VIDEO_BITRATE=14M
+      # - VIDEO_FPS=30
+      # - SCALING_MODE=fill  # 'fill' or 'fit'
+      
+      # --- AD ROTATION SETTINGS ---
+      # - SCALE_TL=500            # Top-left ad size
+      # - SCALE_TR=400            # Top-right ad size  
+      # - OVERLAYAD_ROTATE_TIMER=30   # TL rotation seconds
+      # - TR_SHOW_SECONDS=20      # TR display time
+      # - TR_HIDE_SECONDS=300     # TR hide time
+      # - DAY_START_HOUR=6        # When DAY mode starts
+      # - DAY_END_HOUR=20         # When NIGHT mode starts
+      
       # --- YOUTUBE SETTINGS (Optional) ---
       - YOUTUBE_URL=rtmp://a.rtmp.youtube.com/live2
       - YOUTUBE_KEY=xxxx-xxxx-xxxx-xxxx
+      # - YOUTUBE_BITRATE=4500k
+      # - YOUTUBE_WIDTH=2560
+      # - YOUTUBE_HEIGHT=1440
       
     volumes:
       - /mnt/user/appdata/vantagecam:/config
     ports:
-      - 8554:8554 # Video Output (RTSP)
-      - 9998:9998 # Audio API
+      - 8554:8554  # Video Output (RTSP)
+      - 9998:9998  # Audio API
     restart: unless-stopped
+
+  # ============================================================
+  # ALTERNATIVE: Software-only version (no Intel GPU)
+  # ============================================================
+  # vantagecam-software:
+  #   image: ghcr.io/mcgeaverbeaver/vantagecamlive:software
+  #   container_name: vantagecam
+  #   # NO devices section needed
+  #   environment:
+  #     - RTSP_SOURCE=rtsp://user:pass@192.168.1.50:554/stream
+  #     - ADMIN_USER=admin
+  #     - ADMIN_PASS=change_me_please
+  #     - HARDWARE_ACCEL=false
+  #     - SOFTWARE_PRESET=faster
+  #     - ENABLE_LOCAL_STREAM=true
+  #     - WEATHER_LAT=40.7128
+  #     - WEATHER_LON=-74.0060
+  #     - WEATHER_LOCATION=My City
+  #     - WEATHER_TIMEZONE=America/New_York
+  #     - CAMERA_HEADING=E
+  #   volumes:
+  #     - /mnt/user/appdata/vantagecam:/config
+  #   ports:
+  #     - 8554:8554
+  #     - 9998:9998
+  #   restart: unless-stopped

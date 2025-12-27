@@ -7,6 +7,9 @@ RTSP_SOURCE="${RTSP_SOURCE:-rtsp://192.168.1.100:8554/stream}"
 WORKDIR="/config"
 ADMIN_USER="${ADMIN_USER:-cam_admin}"
 ADMIN_PASS="${ADMIN_PASS:-your_secure_password}"
+
+# Hardware Acceleration (set to 'false' for software encoding)
+HARDWARE_ACCEL="${HARDWARE_ACCEL:-true}"
 VAAPI_DEVICE="${VAAPI_DEVICE:-/dev/dri/renderD128}"
 
 # Feature Toggles
@@ -24,8 +27,11 @@ SCALING_MODE="${SCALING_MODE:-fill}"
 VIDEO_BITRATE="${VIDEO_BITRATE:-14M}"
 VIDEO_FPS="${VIDEO_FPS:-30}"
 WEATHER_ENABLED="${WEATHER_ENABLED:-true}"
-# Renamed per request
 ALERTS_UPDATE_INTERVAL="${ALERTS_UPDATE_INTERVAL:-900}"
+
+# Software Encoding Settings (only used when HARDWARE_ACCEL=false)
+SOFTWARE_PRESET="${SOFTWARE_PRESET:-faster}"  # ultrafast, superfast, veryfast, faster, fast, medium
+SOFTWARE_CRF="${SOFTWARE_CRF:-23}"
 
 # Ads / Overlay Settings
 SCALE_ADS_TL="${SCALE_TL:-500}"
@@ -38,12 +44,9 @@ DAY_END_HOUR="${DAY_END_HOUR:-20}"
 ADS_BASE="/config/ads"
 
 # Paths
-WEATHER_FINAL="$WORKDIR/weather.png"
+WEATHER_COMBINED="$WORKDIR/weather_combined.png"  # Combined weather+alerts
 WEATHER_LIST="$WORKDIR/weather_list.txt"
 WEATHER_TEMP="$WORKDIR/weather_temp.png"
-ALERT_FINAL="$WORKDIR/alert.png"
-ALERT_LIST="$WORKDIR/alert_list.txt"
-ALERT_TEMP="$WORKDIR/alert_temp.png"
 
 # Ad Files
 AD_FINAL_TL="$WORKDIR/current_ad_tl.png"
@@ -53,12 +56,54 @@ AD_FINAL_TR="$WORKDIR/current_ad_tr.png"
 AD_TEMP_TR="$WORKDIR/temp_ad_tr.png"
 AD_PLAYLIST_TR="$WORKDIR/ad_playlist_tr.txt"
 
+# Cache control
+LAST_AD_HASH_TL=""
+LAST_AD_HASH_TR=""
+
+# ==============================================================================
+#  HELPER FUNCTIONS
+# ==============================================================================
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+cleanup() {
+    log "Shutting down..."
+    pkill -P $$ 2>/dev/null
+    exit 0
+}
+trap cleanup SIGTERM SIGINT
+
+check_vaapi() {
+    if [ "$HARDWARE_ACCEL" = "true" ]; then
+        if [ ! -e "$VAAPI_DEVICE" ]; then
+            log "WARNING: VAAPI device $VAAPI_DEVICE not found. Falling back to software encoding."
+            HARDWARE_ACCEL="false"
+            return 1
+        fi
+        # Quick test of VAAPI
+        if ! ffmpeg -hide_banner -init_hw_device vaapi=va:$VAAPI_DEVICE -f lavfi -i nullsrc=s=64x64:d=1 -vf 'format=nv12,hwupload' -c:v h264_vaapi -f null - 2>/dev/null; then
+            log "WARNING: VAAPI encoding test failed. Falling back to software encoding."
+            HARDWARE_ACCEL="false"
+            return 1
+        fi
+        log "VAAPI hardware acceleration enabled on $VAAPI_DEVICE"
+        return 0
+    else
+        log "Software encoding mode (HARDWARE_ACCEL=false)"
+        return 1
+    fi
+}
+
 # ==============================================================================
 #  1. SETUP & INITIALIZATION
 # ==============================================================================
 
-echo "--- 1. Checking Weather Icons ---"
-cat <<EOF > /tmp/download_icons.py
+log "--- 1. Checking Hardware Acceleration ---"
+check_vaapi
+
+log "--- 2. Checking Weather Icons ---"
+cat <<'EOF' > /tmp/download_icons.py
 import os, requests
 DESTINATION_FOLDER = "/config/weather_icons"
 REPO_OWNER = "basmilius"
@@ -81,11 +126,11 @@ EOF
 python3 /tmp/download_icons.py
 rm /tmp/download_icons.py
 
-echo "--- Initializing Ad Folders ---"
+log "--- Initializing Ad Folders ---"
 mkdir -p "$ADS_BASE/topleft/DAY" "$ADS_BASE/topleft/NIGHT"
 mkdir -p "$ADS_BASE/topright/DAY" "$ADS_BASE/topright/NIGHT"
 
-echo "--- Configuring RTSP Server ---"
+log "--- Configuring RTSP Server ---"
 if [ "$ENABLE_LOCAL_STREAM" = "true" ]; then RTSP_ADDRESS=":8554"; else RTSP_ADDRESS="127.0.0.1:8554"; fi
 
 cat <<EOF > /usr/local/bin/mediamtx.yml
@@ -110,14 +155,12 @@ if [ -n "$YOUTUBE_KEY" ]; then
     sleep 1
 fi
 
-echo "--- Initializing Placeholders ---"
-# Weather (900x350)
-if [ ! -f "$WEATHER_FINAL" ]; then python3 /weather.py blank "$WEATHER_FINAL" "900" "350"; fi
-echo "file '$WEATHER_FINAL'" > "$WEATHER_LIST"; echo "duration 10" >> "$WEATHER_LIST"; echo "file '$WEATHER_FINAL'" >> "$WEATHER_LIST"
-
-# Alerts (900x150)
-if [ ! -f "$ALERT_FINAL" ]; then python3 /weather.py blank "$ALERT_FINAL" "900" "150"; fi
-echo "file '$ALERT_FINAL'" > "$ALERT_LIST"; echo "duration 10" >> "$ALERT_LIST"; echo "file '$ALERT_FINAL'" >> "$ALERT_LIST"
+log "--- Initializing Placeholders ---"
+# Combined Weather+Alerts (900x500 = 350 weather + 150 alerts)
+if [ ! -f "$WEATHER_COMBINED" ]; then python3 /weather.py blank "$WEATHER_COMBINED" "900" "500"; fi
+echo "file '$WEATHER_COMBINED'" > "$WEATHER_LIST"
+echo "duration 10" >> "$WEATHER_LIST"
+echo "file '$WEATHER_COMBINED'" >> "$WEATHER_LIST"
 
 # Ads
 python3 /weather.py blank "$AD_FINAL_TL" "$SCALE_ADS_TL" "$SCALE_ADS_TL"
@@ -133,7 +176,7 @@ get_mode() {
     if [ "$hr" -ge "$DAY_START_HOUR" ] && [ "$hr" -lt "$DAY_END_HOUR" ]; then echo "DAY"; else echo "NIGHT"; fi
 }
 
-# TL Manager
+# TL Manager - with hash-based caching
 (
     shopt -s nocaseglob nullglob
     while true; do
@@ -144,7 +187,14 @@ get_mode() {
         else
             for f in "${FILES[@]}"; do
                 if [ "$(get_mode)" != "$MODE" ]; then break; fi
-                if python3 /weather.py ad "$AD_TEMP_TL" "$f" "$SCALE_ADS_TL" "$SCALE_ADS_TL"; then mv -f "$AD_TEMP_TL" "$AD_FINAL_TL"; fi
+                # Skip if file hasn't changed (hash check)
+                CURRENT_HASH=$(md5sum "$f" 2>/dev/null | cut -d' ' -f1)
+                if [ "$CURRENT_HASH" != "$LAST_AD_HASH_TL" ] || [ ! -f "$AD_FINAL_TL" ]; then
+                    if python3 /weather.py ad "$AD_TEMP_TL" "$f" "$SCALE_ADS_TL" "$SCALE_ADS_TL"; then 
+                        mv -f "$AD_TEMP_TL" "$AD_FINAL_TL"
+                        LAST_AD_HASH_TL="$CURRENT_HASH"
+                    fi
+                fi
                 sleep "$AD_ROTATE_TIMER_TL"
             done
         fi
@@ -162,30 +212,31 @@ get_mode() {
             python3 /weather.py blank "$AD_FINAL_TR" "$SCALE_ADS_TR" "$SCALE_ADS_TR"; sleep 60
         else
             if [ $TR_INDEX -ge ${#FILES[@]} ]; then TR_INDEX=0; fi
-            if python3 /weather.py ad "$AD_TEMP_TR" "${FILES[$TR_INDEX]}" "$SCALE_ADS_TR" "$SCALE_ADS_TR"; then
-                mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"; sleep "$TR_SHOW_SECONDS"
+            CURRENT_HASH=$(md5sum "${FILES[$TR_INDEX]}" 2>/dev/null | cut -d' ' -f1)
+            if [ "$CURRENT_HASH" != "$LAST_AD_HASH_TR" ] || [ ! -f "$AD_FINAL_TR" ]; then
+                if python3 /weather.py ad "$AD_TEMP_TR" "${FILES[$TR_INDEX]}" "$SCALE_ADS_TR" "$SCALE_ADS_TR"; then
+                    mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"
+                    LAST_AD_HASH_TR="$CURRENT_HASH"
+                fi
             fi
+            sleep "$TR_SHOW_SECONDS"
             python3 /weather.py blank "$AD_TEMP_TR" "$SCALE_ADS_TR" "$SCALE_ADS_TR"
-            mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"; sleep "$TR_HIDE_SECONDS"
+            mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"
+            LAST_AD_HASH_TR=""  # Reset so next ad gets processed
+            sleep "$TR_HIDE_SECONDS"
             TR_INDEX=$((TR_INDEX + 1))
         fi
     done
 ) &
 
-# --- Weather & Alert Manager ---
+# --- Weather & Alert Manager (Combined) ---
 if [ "$WEATHER_ENABLED" = "true" ]; then
     (
         sleep 5 
         while true; do
-            # 1. Update Bottom-Right Weather
-            python3 /weather.py weather "$WEATHER_TEMP"
-            if [ -f "$WEATHER_TEMP" ]; then mv -f "$WEATHER_TEMP" "$WEATHER_FINAL"; fi
-            
-            # 2. Update Alerts (Stacked)
-            python3 /weather.py alerts "$ALERT_TEMP"
-            if [ -f "$ALERT_TEMP" ]; then mv -f "$ALERT_TEMP" "$ALERT_FINAL"; fi
-            
-            # WAIT for next cycle
+            # Generate combined weather+alerts overlay
+            python3 /weather.py combined "$WEATHER_TEMP"
+            if [ -f "$WEATHER_TEMP" ]; then mv -f "$WEATHER_TEMP" "$WEATHER_COMBINED"; fi
             sleep "$ALERTS_UPDATE_INTERVAL"
         done
     ) &
@@ -196,23 +247,35 @@ if [ -n "$YOUTUBE_KEY" ]; then
     echo "muted" > "/config/audio_mode"
     (
         sleep 10
-        YT_FILTERS="scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=nv12,hwupload"
         while true; do
             AUDIO_MODE=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
+            
+            if [ "$HARDWARE_ACCEL" = "true" ]; then
+                # Hardware-accelerated YouTube encoding
+                YT_FILTERS="scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=nv12,hwupload"
+                HW_INIT="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
+                VIDEO_CODEC="-c:v h264_vaapi -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60"
+            else
+                # Software YouTube encoding
+                YT_FILTERS="scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT}"
+                HW_INIT=""
+                VIDEO_CODEC="-c:v libx264 -preset $SOFTWARE_PRESET -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60"
+            fi
+            
             if [ "$AUDIO_MODE" = "unmuted" ]; then
                 ffmpeg -hide_banner -loglevel error \
-                    -init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va \
+                    $HW_INIT \
                     -rtsp_transport tcp -i "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live" \
                     -vf "$YT_FILTERS" -map 0:v:0 -map 0:a:0? \
-                    -c:v h264_vaapi -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60 \
+                    $VIDEO_CODEC \
                     -c:a aac -b:a 128k -ac 2 -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" &
             else
                 ffmpeg -hide_banner -loglevel error \
-                    -init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va \
+                    $HW_INIT \
                     -rtsp_transport tcp -i "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live" \
                     -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
                     -vf "$YT_FILTERS" -map 0:v:0 -map 1:a:0 \
-                    -c:v h264_vaapi -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60 \
+                    $VIDEO_CODEC \
                     -c:a aac -b:a 128k -shortest -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" &
             fi
             FFMPEG_PID=$!; echo $FFMPEG_PID > "/config/youtube_restreamer.pid"; wait $FFMPEG_PID; sleep 5
@@ -223,7 +286,7 @@ fi
 # ==============================================================================
 #  3. MAIN STREAM ENCODING
 # ==============================================================================
-echo "--- Starting Main Stream ---"
+log "--- Starting Main Stream (Hardware: $HARDWARE_ACCEL) ---"
 
 if [ "$SCALING_MODE" = "fill" ]; then
     CAMERA_FILTER="[0:v]scale=2560:1440:force_original_aspect_ratio=increase:flags=bicubic,crop=2560:1440,format=yuv420p[base]"
@@ -244,14 +307,11 @@ add_overlay() {
         tr) coords="main_w-overlay_w-20:20" ;;
         br) coords="main_w-overlay_w-20:main_h-overlay_h-20" ;;
         bl) coords="20:main_h-overlay_h-20" ;;
-        
-        # --- NEW ALERT POSITION: Stacked ---
-        # Weather height (350) + Margin (20) = 370px from bottom
-        br_alert) coords="main_w-overlay_w-20:main_h-overlay_h-370" ;;
     esac
 
     INPUTS="$INPUTS -f concat -safe 0 -stream_loop -1 -i $path"
-    local scale_cmd=""; if [ -n "$height" ]; then scale_cmd="scale=${width}:${height}"; else scale_cmd="scale=${width}:${width}"; fi
+    local scale_cmd=""
+    if [ -n "$height" ]; then scale_cmd="scale=${width}:${height}"; else scale_cmd="scale=${width}:${width}"; fi
     FILTER_CHAIN="${FILTER_CHAIN};[${INPUT_COUNT}:v]${scale_cmd},format=rgba[ovr${INPUT_COUNT}];[${LAST_V}][ovr${INPUT_COUNT}]overlay=${coords}:eof_action=pass:shortest=0[v${INPUT_COUNT}]"
     LAST_V="v$INPUT_COUNT"
     INPUT_COUNT=$((INPUT_COUNT+1))
@@ -261,22 +321,31 @@ add_overlay "$AD_PLAYLIST_TL" "tl" "$SCALE_ADS_TL" ""
 add_overlay "$AD_PLAYLIST_TR" "tr" "$SCALE_ADS_TR" ""
 
 if [ "$WEATHER_ENABLED" = "true" ]; then 
-    # 1. Weather (Bottom Right)
-    add_overlay "$WEATHER_LIST" "br" "900" "350"
-    
-    # 2. Alert (Stacked above it)
-    add_overlay "$ALERT_LIST" "br_alert" "900" "150"
+    # Single combined weather+alerts overlay (reduced from 2 to 1)
+    add_overlay "$WEATHER_LIST" "br" "900" "500"
 fi
 
-FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=nv12[soft_final];[soft_final]hwupload[vfinal]"
+if [ "$HARDWARE_ACCEL" = "true" ]; then
+    # Hardware encoding path
+    FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=nv12[soft_final];[soft_final]hwupload[vfinal]"
+    HW_INIT="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
+    VIDEO_CODEC="-c:v h264_vaapi -b:v $VIDEO_BITRATE -maxrate $VIDEO_BITRATE -bufsize 28M -r $VIDEO_FPS -g $(($VIDEO_FPS * 2))"
+else
+    # Software encoding path
+    FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=yuv420p[vfinal]"
+    HW_INIT=""
+    VIDEO_CODEC="-c:v libx264 -preset $SOFTWARE_PRESET -crf $SOFTWARE_CRF -b:v $VIDEO_BITRATE -maxrate $VIDEO_BITRATE -bufsize 28M -r $VIDEO_FPS -g $(($VIDEO_FPS * 2))"
+fi
 
 while true; do
-    ffmpeg -hide_banner -loglevel warning -init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va \
+    ffmpeg -hide_banner -loglevel warning $HW_INIT \
     $INPUTS \
     -filter_complex "$FINAL_FILTERS" \
     -map "[vfinal]" -map 0:a? \
-    -c:v h264_vaapi -b:v $VIDEO_BITRATE -maxrate $VIDEO_BITRATE -bufsize 28M -r $VIDEO_FPS -g $(($VIDEO_FPS * 2)) \
+    $VIDEO_CODEC \
     -c:a copy \
     -f rtsp -rtsp_transport tcp "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live"
+    
+    log "FFmpeg exited, restarting in 5 seconds..."
     sleep 5
 done
