@@ -1,6 +1,5 @@
 # Vantage Cam Live v2.8
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/mcgeaverbeaver/vantagecamlive)](https://hub.docker.com/r/mcgeaverbeaver/vantagecamlive)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **OpenSource Automated Live Stream Broadcaster with Weather, Smart Alerts & Self-Healing**
