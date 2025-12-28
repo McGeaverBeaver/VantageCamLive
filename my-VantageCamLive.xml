@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <Container version="2">
-  <Name>VantageCamLive</Name>
+  <n>VantageCamLive</n>
   <Repository>ghcr.io/mcgeaverbeaver/vantagecamlive:latest</Repository>
   <Registry>https://github.com/McGeaverBeaver/VantageCamLive/pkgs/container/vantagecamlive</Registry>
   <Network>bridge</Network>
@@ -10,16 +10,17 @@
   <Support>https://github.com/McGeaverBeaver/VantageCamLive</Support>
   <Project>https://github.com/McGeaverBeaver/VantageCamLive</Project>
   <Overview>Automated 24/7 Live Stream Broadcaster with Weather Overlays, Smart Alerts, and Self-Healing.&#xD;
-&#xD;
-Transform a standard security camera feed into a professional broadcast. Features include:&#xD;
-- Real-time weather overlays (Environment Canada &amp; Open-Meteo)&#xD;
-- Smart alert system with flashing warnings&#xD;
-- Dynamic sponsor rotation (Day/Night modes)&#xD;
-- Hardware (Intel QuickSync) or Software encoding&#xD;
-- Self-healing watchdog with automatic recovery&#xD;
-- Auto-set stream to PUBLIC after recovery&#xD;
-&#xD;
-NEW in v2.8: Self-Healing Watchdog - automatically detects stream failures and restarts!</Overview>
+    &#xD;
+    Transform a standard security camera feed into a professional broadcast. Features include:&#xD;
+    - Real-time weather overlays (Environment Canada &amp; Open-Meteo)&#xD;
+    - Smart alert system with flashing warnings&#xD;
+    - Dynamic sponsor rotation (Day/Night modes)&#xD;
+    - Hardware (Intel QuickSync) or Software encoding&#xD;
+    - Self-healing watchdog with automatic recovery&#xD;
+    - RTSP source health checks before recovery&#xD;
+    - Auto-set stream to PUBLIC after recovery&#xD;
+    &#xD;
+    v2.8.1: RTSP health checks, smart startup delay, improved recovery!</Overview>
   <Category>MediaApp:Video MediaServer:Video</Category>
   <WebUI/>
   <TemplateURL/>
@@ -31,27 +32,27 @@ NEW in v2.8: Self-Healing Watchdog - automatically detects stream failures and r
   <DonateText/>
   <DonateLink/>
   <Requires/>
-  
+
   <!-- Config Volume -->
   <Config Name="Config Path" Target="/config" Default="/mnt/user/appdata/vantagecam" Mode="rw" Description="Path for config files, ads, and weather icons" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/vantagecam</Config>
-  
+
   <!-- Required Settings -->
   <Config Name="RTSP Source" Target="RTSP_SOURCE" Default="rtsp://user:pass@192.168.1.50:554/stream" Mode="" Description="Your camera's RTSP stream URL" Type="Variable" Display="always" Required="true" Mask="false">rtsp://user:pass@192.168.1.50:554/stream</Config>
   <Config Name="Admin User" Target="ADMIN_USER" Default="admin" Mode="" Description="Username for internal RTSP auth" Type="Variable" Display="always" Required="true" Mask="false">admin</Config>
   <Config Name="Admin Pass" Target="ADMIN_PASS" Default="change_me_please" Mode="" Description="Password for internal RTSP auth" Type="Variable" Display="always" Required="true" Mask="true">change_me_please</Config>
-  
+
   <!-- Hardware Acceleration -->
   <Config Name="Hardware Accel" Target="HARDWARE_ACCEL" Default="true" Mode="" Description="Use Intel QuickSync (true) or Software encoding (false)" Type="Variable" Display="always" Required="false" Mask="false">true</Config>
   <Config Name="VAAPI Device" Target="VAAPI_DEVICE" Default="/dev/dri/renderD128" Mode="" Description="VAAPI render device path (advanced)" Type="Variable" Display="advanced" Required="false" Mask="false">/dev/dri/renderD128</Config>
-  
+
   <!-- Software Encoding -->
   <Config Name="Software Preset" Target="SOFTWARE_PRESET" Default="faster" Mode="" Description="x264 preset (ultrafast|superfast|veryfast|faster|fast|medium)" Type="Variable" Display="advanced" Required="false" Mask="false">faster</Config>
   <Config Name="Software CRF" Target="SOFTWARE_CRF" Default="23" Mode="" Description="x264 quality (lower=better, 18-28 typical)" Type="Variable" Display="advanced" Required="false" Mask="false">23</Config>
-  
+
   <!-- Stream Settings -->
   <Config Name="Enable Local Stream" Target="ENABLE_LOCAL_STREAM" Default="false" Mode="" Description="Enable RTSP output for local preview (set false for direct YouTube mode)" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
   <Config Name="Scaling Mode" Target="SCALING_MODE" Default="fill" Mode="" Description="fill (zoom/crop to 16:9) or fit (letterbox)" Type="Variable" Display="always" Required="false" Mask="false">fill</Config>
-  
+
   <!-- Weather Settings -->
   <Config Name="Weather Latitude" Target="WEATHER_LAT" Default="44.3894" Mode="" Description="Your location latitude" Type="Variable" Display="always" Required="true" Mask="false">44.3894</Config>
   <Config Name="Weather Longitude" Target="WEATHER_LON" Default="-79.6903" Mode="" Description="Your location longitude" Type="Variable" Display="always" Required="true" Mask="false">-79.6903</Config>
@@ -59,33 +60,37 @@ NEW in v2.8: Self-Healing Watchdog - automatically detects stream failures and r
   <Config Name="Weather Timezone" Target="WEATHER_TIMEZONE" Default="America/Toronto" Mode="" Description="Your timezone (e.g., America/New_York)" Type="Variable" Display="always" Required="true" Mask="false">America/Toronto</Config>
   <Config Name="Camera Heading" Target="CAMERA_HEADING" Default="E" Mode="" Description="Direction camera faces (N, NE, E, SE, S, SW, W, NW or degrees)" Type="Variable" Display="always" Required="false" Mask="false">E</Config>
   <Config Name="Alerts Update Interval" Target="ALERTS_UPDATE_INTERVAL" Default="900" Mode="" Description="Seconds between weather/alert updates (default 15 min)" Type="Variable" Display="advanced" Required="false" Mask="false">900</Config>
-  
+
   <!-- YouTube Settings -->
   <Config Name="YouTube URL" Target="YOUTUBE_URL" Default="rtmp://a.rtmp.youtube.com/live2" Mode="" Description="YouTube RTMP ingest URL" Type="Variable" Display="always" Required="false" Mask="false">rtmp://a.rtmp.youtube.com/live2</Config>
   <Config Name="YouTube Stream Key" Target="YOUTUBE_KEY" Default="" Mode="" Description="Your YouTube stream key (xxxx-xxxx-xxxx-xxxx)" Type="Variable" Display="always" Required="false" Mask="true"></Config>
   <Config Name="YouTube Bitrate" Target="YOUTUBE_BITRATE" Default="4500k" Mode="" Description="Upload bitrate to YouTube" Type="Variable" Display="advanced" Required="false" Mask="false">4500k</Config>
   <Config Name="YouTube Width" Target="YOUTUBE_WIDTH" Default="2560" Mode="" Description="Output width (2560 for 1440p, 1920 for 1080p)" Type="Variable" Display="advanced" Required="false" Mask="false">2560</Config>
   <Config Name="YouTube Height" Target="YOUTUBE_HEIGHT" Default="1440" Mode="" Description="Output height (1440 for 1440p, 1080 for 1080p)" Type="Variable" Display="advanced" Required="false" Mask="false">1440</Config>
-  
+
   <!-- ============================================================ -->
-  <!-- SELF-HEALING WATCHDOG SETTINGS (NEW in v2.8) -->
+  <!-- SELF-HEALING WATCHDOG SETTINGS (v2.8.1) -->
   <!-- ============================================================ -->
   <Config Name="Watchdog Enabled" Target="WATCHDOG_ENABLED" Default="false" Mode="" Description="Enable self-healing watchdog (auto-restart on stream failure)" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
   <Config Name="Watchdog Status URL" Target="WATCHDOG_STATUS_URL" Default="" Mode="" Description="URL to your youtube_status.php endpoint (e.g., https://yourdomain.com/youtube_status.php)" Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Watchdog Startup Delay" Target="WATCHDOG_STARTUP_DELAY" Default="180" Mode="" Description="Seconds to wait after boot before first status check (YouTube needs time to recognize ingest)" Type="Variable" Display="always" Required="false" Mask="false">180</Config>
   <Config Name="Watchdog Check Interval" Target="WATCHDOG_CHECK_INTERVAL" Default="30" Mode="" Description="Seconds between status checks" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
   <Config Name="Watchdog Initial Delay" Target="WATCHDOG_INITIAL_DELAY" Default="10" Mode="" Description="Initial wait before restart (uses exponential backoff)" Type="Variable" Display="advanced" Required="false" Mask="false">10</Config>
   <Config Name="Watchdog Max Delay" Target="WATCHDOG_MAX_DELAY" Default="900" Mode="" Description="Maximum backoff delay in seconds (default 15 min)" Type="Variable" Display="advanced" Required="false" Mask="false">900</Config>
   <Config Name="Watchdog Stability Threshold" Target="WATCHDOG_STABILITY_THRESHOLD" Default="30" Mode="" Description="Seconds stream must be stable to reset backoff" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
-  
+  <Config Name="Watchdog Verification Timeout" Target="WATCHDOG_VERIFICATION_TIMEOUT" Default="120" Mode="" Description="Seconds to wait for YouTube to show 'live' after restart" Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
+  <Config Name="Watchdog RTSP Check" Target="WATCHDOG_RTSP_CHECK" Default="true" Mode="" Description="Check RTSP source health before recovery attempts" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Watchdog Verbose" Target="WATCHDOG_VERBOSE" Default="true" Mode="" Description="Enable detailed logging of status checks" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+
   <!-- Discord Notifications -->
   <Config Name="Discord Webhook URL" Target="DISCORD_WEBHOOK_URL" Default="" Mode="" Description="Discord webhook URL for alerts (Server Settings -> Integrations -> Webhooks)" Type="Variable" Display="always" Required="false" Mask="false"></Config>
   <Config Name="Discord User ID" Target="DISCORD_USER_ID" Default="" Mode="" Description="Your Discord user ID for @mentions (Enable Developer Mode, right-click username, Copy ID)" Type="Variable" Display="always" Required="false" Mask="false"></Config>
-  
+
   <!-- YouTube API (for auto-setting stream to PUBLIC) -->
   <Config Name="YouTube Client ID" Target="YOUTUBE_CLIENT_ID" Default="" Mode="" Description="OAuth Client ID from Google Cloud Console (for auto-PUBLIC)" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="YouTube Client Secret" Target="YOUTUBE_CLIENT_SECRET" Default="" Mode="" Description="OAuth Client Secret from Google Cloud Console" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
   <Config Name="YouTube Refresh Token" Target="YOUTUBE_REFRESH_TOKEN" Default="" Mode="" Description="OAuth Refresh Token (generate via OAuth Playground)" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
-  
+
   <!-- Ad Settings -->
   <Config Name="Top-Left Ad Size" Target="SCALE_TL" Default="500" Mode="" Description="Max width in pixels for top-left ads" Type="Variable" Display="advanced" Required="false" Mask="false">500</Config>
   <Config Name="Top-Right Ad Size" Target="SCALE_TR" Default="400" Mode="" Description="Max width in pixels for top-right ads" Type="Variable" Display="advanced" Required="false" Mask="false">400</Config>
@@ -94,13 +99,13 @@ NEW in v2.8: Self-Healing Watchdog - automatically detects stream failures and r
   <Config Name="TR Hide Seconds" Target="TR_HIDE_SECONDS" Default="300" Mode="" Description="How long top-right ads are hidden" Type="Variable" Display="advanced" Required="false" Mask="false">300</Config>
   <Config Name="Day Start Hour" Target="DAY_START_HOUR" Default="6" Mode="" Description="Hour (0-23) when Day mode begins" Type="Variable" Display="advanced" Required="false" Mask="false">6</Config>
   <Config Name="Day End Hour" Target="DAY_END_HOUR" Default="20" Mode="" Description="Hour (0-23) when Night mode begins" Type="Variable" Display="advanced" Required="false" Mask="false">20</Config>
-  
+
   <!-- Audio API -->
   <Config Name="Audio API Key" Target="AUDIO_API_KEY" Default="" Mode="" Description="API key to secure the audio mute/unmute endpoint" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
-  
+
   <!-- Debug -->
   <Config Name="Weather Debug" Target="WEATHER_DEBUG" Default="false" Mode="" Description="Enable verbose weather logging" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
-  
+
   <!-- Ports -->
   <Config Name="RTSP Port" Target="8554" Default="8554" Mode="tcp" Description="RTSP output port (only if ENABLE_LOCAL_STREAM=true)" Type="Port" Display="always" Required="false" Mask="false">8554</Config>
   <Config Name="Audio API Port" Target="9998" Default="9998" Mode="tcp" Description="Audio control API port" Type="Port" Display="always" Required="false" Mask="false">9998</Config>
