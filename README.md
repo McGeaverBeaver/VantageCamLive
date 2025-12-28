@@ -1,73 +1,105 @@
-# Vantage Cam Live v2.7
-**OpenSource Automated Live Stream Broadcaster with Weather & Smart Alerts**
+# Vantage Cam Live v2.8
 
-See a demo @ [https://simcoelocal.ca/](https://simcoelocal.ca/)
+[![Docker Pulls](https://img.shields.io/docker/pulls/mcgeaverbeaver/vantagecamlive)](https://hub.docker.com/r/mcgeaverbeaver/vantagecamlive)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+**OpenSource Automated Live Stream Broadcaster with Weather, Smart Alerts & Self-Healing**
+
+> 🎥 **See it in action:** [https://simcoelocal.ca/](https://simcoelocal.ca/)
 
 Transform a standard security camera feed into a professional broadcast without the hassle. Vantage Cam Live runs entirely in Docker and handles all the heavy lifting for you:
 
-* **⚡ Automated Production:** Overlays real-time weather, active government warnings, and rotating sponsor logos automatically.
-* **📺 Universal Fit:** Smart "Fill" scaling fixes aspect ratios, so even 4:3 or ultra-wide cameras look perfect on YouTube (No more black bars!).
-* **🚀 Set & Forget:** Once configured, it runs 24/7 with self-healing assets and no maintenance required.
-
-> **💡 HARDWARE OPTIONS:** This container supports both **Intel QuickSync (VAAPI)** hardware encoding and **software (x264)** encoding. Hardware encoding is recommended for best performance, but software mode allows the container to run on AMD, ARM, cloud VMs, or any system without Intel integrated graphics.
-
----
-### 🌟 Key Features
-
-* **Resolution Unlocked:** Stream in crisp **1440p (2K)** by default, or configure for 1080p/4K.
-* **Smart Scaling Engine:** The `SCALING_MODE` automatically zooms and crops 4:3 camera signals to fill a 16:9 frame, eliminating "windowboxing" (black bars).
-* **Live Weather Overlay:** Real-time local weather updates powered by Open-Meteo with **Self-Healing Assets** (icons are automatically downloaded/repaired on boot).
-* **🚨 Smart Alert System:**
-    * **Alert Classification:** Full Environment Canada alert hierarchy support - Warnings, Watches, Advisories, and Statements with proper color coding.
-    * **Flashing Red Warnings:** Extreme weather alerts (tornado, severe thunderstorm, etc.) flash to grab viewer attention.
-    * **Compact Statements:** Weather statements display at half-height to stay informative without dominating the screen.
-    * **Deep Data Fetch:** Pulls detailed, region-specific warning titles directly from official XML feeds.
-    * **Issued Timestamps:** Alerts display the official "Issued" time with dynamic text scaling.
-* **🔧 Flexible Encoding:**
-    * **Hardware Mode (Default):** Uses Intel QuickSync via VAAPI for minimal CPU usage.
-    * **Software Mode:** Falls back to x264 encoding for systems without Intel GPUs.
-    * **Auto-Fallback:** Automatically switches to software mode if VAAPI initialization fails.
-* **🚀 Direct-to-YouTube Mode:** When streaming only to YouTube, runs a single optimized FFmpeg pipeline - no intermediate RTSP server needed. Saves CPU and RAM automatically.
-* **Dynamic Sponsor System:** "Watch folders" allow you to drag-and-drop sponsor logos for automatic rotation (Day/Night support) without restarting the stream.
-* **Audio Control API:** Mute or unmute your stream remotely using simple web commands.
+- ⚡ **Automated Production** — Overlays real-time weather, government warnings, and rotating sponsor logos
+- 📺 **Universal Fit** — Smart scaling fixes aspect ratios (no more black bars!)
+- 🚀 **Set & Forget** — Runs 24/7 with self-healing assets and automatic recovery
+- 🔄 **Self-Healing** — Detects failures and auto-recovers with Discord notifications
 
 ---
-### 🚀 Getting Started
 
-**1. Folder Structure**
-Before starting, create a folder on your host (e.g., `/home/myuser/vantagecam`) to store your images. The container will automatically create the sub-folders for you:
+## 📑 Table of Contents
 
-```text
+- [Key Features](#-key-features)
+- [Getting Started](#-getting-started)
+- [Docker Compose](#-docker-compose)
+- [Direct-to-YouTube Mode](#-direct-to-youtube-mode)
+- [Self-Healing Watchdog](#-self-healing-watchdog)
+- [Discord Notifications](#-discord-notifications)
+- [YouTube API Setup Guide](#-youtube-api-setup-guide)
+- [Alert System](#-alert-system)
+- [Sponsor Management](#-sponsor-management)
+- [Advanced Configuration](#%EF%B8%8F-advanced-configuration)
+- [Audio Control API](#%EF%B8%8F-audio-control-api)
+- [Troubleshooting](#-troubleshooting)
+- [Changelog](#-changelog)
+
+---
+
+## 🌟 Key Features
+
+### Video & Encoding
+- **Resolution Unlocked** — Stream in 1440p (2K) by default, or configure for 1080p/4K
+- **Smart Scaling** — `SCALING_MODE=fill` zooms and crops 4:3 cameras to fill 16:9 frames
+- **Flexible Encoding** — Hardware (Intel QuickSync/VAAPI) or software (x264) encoding
+- **Auto-Fallback** — Automatically switches to software mode if VAAPI fails
+
+### Weather & Alerts
+- **Live Weather Overlay** — Real-time updates powered by Open-Meteo
+- **Smart Alert System** — Full Environment Canada + NWS alert hierarchy
+- **Flashing Warnings** — Extreme weather alerts flash red to grab attention
+- **Self-Healing Assets** — Weather icons auto-download/repair on boot
+
+### Streaming
+- **Direct-to-YouTube Mode** — Single FFmpeg pipeline saves CPU/RAM when no local preview needed
+- **Dynamic Sponsors** — Drag-and-drop logos with automatic Day/Night rotation
+- **Audio Control API** — Remote mute/unmute via HTTP endpoints
+
+### Reliability *(New in v2.8)*
+- **Self-Healing Watchdog** — Auto-detects failures and recovers streams
+- **Exponential Backoff** — Smart retry delays prevent hammering YouTube
+- **Auto-PUBLIC** — Restores stream visibility after recovery via YouTube API
+- **Discord Alerts** — Instant notifications for offline/recovery/errors
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Docker installed on your system
+- RTSP camera feed URL
+- YouTube stream key (for YouTube streaming)
+
+### Folder Structure
+
+Create a folder on your host for persistent data. The container auto-creates subfolders:
+
+```
 /config/
 ├── ads/
 │   ├── topleft/
-│   │   ├── DAY/    <-- Drop Day logos here
-│   │   └── NIGHT/  <-- Drop Night logos here
+│   │   ├── DAY/         # Daytime sponsor logos
+│   │   └── NIGHT/       # Nighttime sponsor logos
 │   └── topright/
 │       ├── DAY/
 │       └── NIGHT/
-└── weather_icons/  <-- Icons auto-download here (Self-Healing)
+├── weather_icons/       # Auto-downloaded weather icons
+├── watchdog.log         # Self-healing activity log
+└── watchdog_state.json  # Persistent watchdog state
 ```
 
-**2. Quick Start (Unraid)**
+### Quick Start (Unraid)
 
-1.  **Install Template:**
-    Copy the provided `my-VantageCamLive.xml` file to your Unraid USB drive at:
-    `/boot/config/plugins/dockerMan/templates-user/`
-2.  **Add Container:**
-    * Navigate to the **Docker** tab in the Unraid WebUI.
-    * Click **Add Container** at the bottom.
-3.  **Select Template:**
-    * Click the **Template** dropdown list.
-    * Select **VantageCamLive**.
-4.  **Configure & Launch:**
-    * Update the required variables (RTSP Source, YouTube Key, Coordinates).
-    * Click **Apply**.
+1. Copy `my-VantageCamLive.xml` to `/boot/config/plugins/dockerMan/templates-user/`
+2. Navigate to **Docker** → **Add Container**
+3. Select **VantageCamLive** from the Template dropdown
+4. Configure required variables and click **Apply**
 
 ---
-### 📦 Docker Compose
 
-#### Hardware Encoding (Intel QuickSync)
+## 📦 Docker Compose
+
+### Hardware Encoding (Intel QuickSync)
+
 ```yaml
 version: "3"
 services:
@@ -75,243 +107,466 @@ services:
     image: ghcr.io/mcgeaverbeaver/vantagecamlive:latest
     container_name: vantagecam
     devices:
-      - /dev/dri:/dev/dri # Intel QuickSync
+      - /dev/dri:/dev/dri  # Intel QuickSync
     environment:
-      # --- REQUIRED ---
+      # === REQUIRED ===
       - RTSP_SOURCE=rtsp://user:pass@192.168.1.50:554/stream
       - ADMIN_USER=admin
       - ADMIN_PASS=change_me_please
       
-      # --- HARDWARE ACCELERATION (default: true) ---
-      - HARDWARE_ACCEL=true
-      
-      # --- LOCAL STREAM (set true if you need RTSP preview) ---
-      - ENABLE_LOCAL_STREAM=false
-      
-      # --- WEATHER & LOCATION ---
+      # === WEATHER & LOCATION ===
       - WEATHER_LAT=40.7128
       - WEATHER_LON=-74.0060
       - WEATHER_LOCATION=My City
       - WEATHER_TIMEZONE=America/New_York
       - CAMERA_HEADING=E
       
-      # --- ALERTS ---
-      - ALERTS_UPDATE_INTERVAL=900
-      
-      # --- YOUTUBE ---
+      # === YOUTUBE ===
       - YOUTUBE_URL=rtmp://a.rtmp.youtube.com/live2
       - YOUTUBE_KEY=xxxx-xxxx-xxxx-xxxx
       - YOUTUBE_WIDTH=2560
       - YOUTUBE_HEIGHT=1440
       - SCALING_MODE=fill
       
+      # === SELF-HEALING (Recommended) ===
+      - WATCHDOG_ENABLED=true
+      - WATCHDOG_STATUS_URL=https://yourdomain.com/youtube_status.php
+      
+      # === DISCORD ALERTS (Optional) ===
+      - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxxxx/xxxxx
+      - DISCORD_USER_ID=123456789012345678
+      
+      # === YOUTUBE API (Optional - for auto-PUBLIC) ===
+      # - YOUTUBE_CLIENT_ID=xxxxx.apps.googleusercontent.com
+      # - YOUTUBE_CLIENT_SECRET=GOCSPX-xxxxx
+      # - YOUTUBE_REFRESH_TOKEN=1//xxxxx
+      
     volumes:
       - /mnt/user/appdata/vantagecam:/config
     ports:
-      - 8554:8554 # Video Output (only needed if ENABLE_LOCAL_STREAM=true)
-      - 9998:9998 # Audio API
+      - 8554:8554  # RTSP (if ENABLE_LOCAL_STREAM=true)
+      - 9998:9998  # Audio API
     restart: unless-stopped
 ```
 
-#### Software Encoding (No GPU Required)
+### Software Encoding (No GPU)
+
 ```yaml
 version: "3"
 services:
   vantagecam:
     image: ghcr.io/mcgeaverbeaver/vantagecamlive:latest
     container_name: vantagecam
-    # NO devices section needed
     environment:
-      # --- REQUIRED ---
       - RTSP_SOURCE=rtsp://user:pass@192.168.1.50:554/stream
-      - ADMIN_USER=admin
-      - ADMIN_PASS=change_me_please
-      
-      # --- SOFTWARE ENCODING ---
       - HARDWARE_ACCEL=false
-      - SOFTWARE_PRESET=faster  # ultrafast|superfast|veryfast|faster|fast|medium
-      - SOFTWARE_CRF=23         # Quality: lower = better (18-28 typical)
-      
-      # --- LOCAL STREAM ---
-      - ENABLE_LOCAL_STREAM=false
-      
-      # --- WEATHER & LOCATION ---
-      - WEATHER_LAT=40.7128
-      - WEATHER_LON=-74.0060
-      - WEATHER_LOCATION=My City
-      - WEATHER_TIMEZONE=America/New_York
-      - CAMERA_HEADING=E
-      
-      # --- ALERTS ---
-      - ALERTS_UPDATE_INTERVAL=900
-      
-      # --- YOUTUBE ---
-      - YOUTUBE_URL=rtmp://a.rtmp.youtube.com/live2
-      - YOUTUBE_KEY=xxxx-xxxx-xxxx-xxxx
-      
+      - SOFTWARE_PRESET=faster
+      - SOFTWARE_CRF=23
+      # ... (same as above)
     volumes:
       - /mnt/user/appdata/vantagecam:/config
     ports:
-      - 9998:9998 # Audio API
+      - 9998:9998
     restart: unless-stopped
 ```
 
-> ⚠️ **Note:** Software encoding uses significantly more CPU. For 1440p streaming, expect 2-4 CPU cores at moderate-high usage depending on preset.
+> ⚠️ **Note:** Software encoding uses significantly more CPU. Expect 2-4 cores at moderate-high usage for 1440p.
 
 ---
 
-### 🎯 Direct-to-YouTube Mode
+## 🎯 Direct-to-YouTube Mode
 
-**New in v2.7!** When streaming only to YouTube (no local preview needed), the container automatically uses an optimized single-pipeline architecture:
+When streaming only to YouTube (no local preview), the container uses an optimized single-pipeline:
 
 | Mode | Architecture | When Active |
 |:-----|:-------------|:------------|
 | **Direct** | Camera → FFmpeg → YouTube | `YOUTUBE_KEY` set + `ENABLE_LOCAL_STREAM=false` |
 | **MediaMTX** | Camera → FFmpeg → RTSP → FFmpeg → YouTube | `ENABLE_LOCAL_STREAM=true` |
 
-**Direct mode benefits:**
-- ~50MB less RAM (no MediaMTX server)
-- 1-2 fewer CPU cores (no re-encoding)
-- Lower latency to YouTube
-
-Set `ENABLE_LOCAL_STREAM=true` if you need to preview the stream locally via RTSP.
+**Benefits of Direct mode:**
+- ~50MB less RAM
+- 1-2 fewer CPU cores
+- Lower latency
 
 ---
 
-### 🚨 Alert System
+## 🔄 Self-Healing Watchdog
 
-The alert overlay supports the full Environment Canada alert hierarchy:
+The watchdog monitors your stream and automatically recovers from failures.
+
+### How It Works
+
+1. **Detects** failure by polling your `youtube_status.php` endpoint
+2. **Stops** FFmpeg gracefully (SIGINT → SIGTERM → SIGKILL)
+3. **Waits** with exponential backoff (10s → 20s → 40s... up to 15 min)
+4. **Restarts** via the existing start.sh loop
+5. **Verifies** stream is stable for 30+ seconds
+6. **Sets** broadcast to PUBLIC (if YouTube API configured)
+7. **Notifies** via Discord (if configured)
+
+### Quick Setup
+
+```yaml
+environment:
+  - WATCHDOG_ENABLED=true
+  - WATCHDOG_STATUS_URL=https://yourdomain.com/youtube_status.php
+```
+
+Deploy the included `youtube_status.php` to your web server. It should return:
+```json
+{"status": "live", "viewers": 123}
+// or
+{"status": "offline"}
+```
+
+### Recovery Flow
+
+```
+Stream OFFLINE detected (2 consecutive checks)
+              │
+              ▼
+┌─────────────────────────────────┐
+│  📢 Discord: "Stream Offline"   │
+│  Stop FFmpeg gracefully         │
+│  Wait with exponential backoff  │
+└─────────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────┐
+│  FFmpeg auto-restarts           │
+│  Wait 20s for stabilization     │
+│  Verify LIVE for 30+ seconds    │
+└─────────────────────────────────┘
+              │
+       ┌──────┴──────┐
+       │             │
+    SUCCESS       FAILED
+       │             │
+       ▼             ▼
+ Reset backoff   Increase delay
+ Set → PUBLIC    Retry
+ 📢 "Recovered"
+```
+
+---
+
+## 📢 Discord Notifications
+
+Get instant alerts on Discord for stream events and errors.
+
+### Setup
+
+1. **Create Webhook:**
+   - Open Discord → Server Settings → Integrations → Webhooks
+   - Click **New Webhook**, name it, select channel
+   - Copy the webhook URL
+
+2. **Get Your User ID (for @mentions):**
+   - Enable Developer Mode: Settings → Advanced → Developer Mode
+   - Right-click your username → Copy User ID
+
+3. **Configure:**
+   ```yaml
+   environment:
+     - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxxxx/xxxxx
+     - DISCORD_USER_ID=123456789012345678
+   ```
+
+### Alert Types
+
+| Event | Color | Mentions You? |
+|:------|:------|:--------------|
+| Watchdog Started | 🟢 Green | No |
+| Stream Went Offline | 🟠 Orange | Yes |
+| Stream Recovered | 🟢 Green | Yes |
+| Broadcast Set to PUBLIC | 🟢 Green | No |
+| Token Expired | 🔴 Red | Yes |
+| Invalid Credentials | 🔴 Red | Yes |
+| Scope Error | 🟠 Orange | Yes |
+
+---
+
+## 🔑 YouTube API Setup Guide
+
+Enable auto-PUBLIC to automatically restore stream visibility after recovery.
+
+> **Note:** This is optional. The watchdog works without it—streams just won't auto-change to PUBLIC.
+
+### Step 1: Create Google Cloud Project
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project (e.g., "VantageCam")
+3. Select the project
+
+### Step 2: Enable YouTube Data API v3
+
+1. Go to **APIs & Services** → **Library**
+2. Search for "YouTube Data API v3"
+3. Click **Enable**
+
+### Step 3: Configure OAuth Consent Screen
+
+1. Go to **APIs & Services** → **OAuth consent screen**
+2. Select **External** → **Create**
+3. Fill in app name, support email, developer email
+4. Add scope: `https://www.googleapis.com/auth/youtube`
+5. Add yourself as a test user
+6. Save
+
+### Step 4: Create OAuth Credentials
+
+1. Go to **APIs & Services** → **Credentials**
+2. Click **+ Create Credentials** → **OAuth client ID**
+3. Select **Web application**
+4. Add Authorized redirect URI:
+   ```
+   https://developers.google.com/oauthplayground
+   ```
+5. Click **Create**
+6. Copy your **Client ID** and **Client Secret**
+
+### Step 5: Generate Refresh Token
+
+1. Go to [OAuth Playground](https://developers.google.com/oauthplayground)
+2. Click gear icon ⚙️ → Check "Use your own OAuth credentials"
+3. Enter your Client ID and Client Secret
+4. In "Input your own scopes", type:
+   ```
+   https://www.googleapis.com/auth/youtube
+   ```
+5. Click **Authorize APIs** → Sign in → Grant access
+6. Click **Exchange authorization code for tokens**
+7. Copy the **Refresh Token**
+
+### Step 6: Configure Container
+
+```yaml
+environment:
+  - YOUTUBE_CLIENT_ID=xxxxx.apps.googleusercontent.com
+  - YOUTUBE_CLIENT_SECRET=GOCSPX-xxxxx
+  - YOUTUBE_REFRESH_TOKEN=1//xxxxx
+```
+
+### Token Expiration
+
+**Testing mode:** Tokens expire after 7 days. You can either:
+- Regenerate the token weekly, OR
+- Publish your app (OAuth consent screen → Publish App)
+
+> **Note:** Publishing your app does NOT give others access to your YouTube account. It only means others could use your app to authorize access to their own accounts. Your refresh token only works for your channel.
+
+---
+
+## 🚨 Alert System
+
+Supports Environment Canada and US National Weather Service alerts:
 
 | Alert Type | Color | Display |
 |:-----------|:------|:--------|
-| **Warning** (Extreme) | 🔴 Red + Flashing | Tornado, Severe Thunderstorm, Hurricane, Blizzard |
+| **Warning** (Extreme) | 🔴 Red + Flashing | Tornado, Severe Thunderstorm, Hurricane |
 | **Warning** (Moderate) | 🟠 Orange | Freezing Rain, Wind, Rainfall, Snowfall |
 | **Warning** (Minor) | 🟡 Yellow | Other warnings |
-| **Watch** | Colored + Dashed Border | Same colors as warnings |
-| **Statement** | ⚫ Grey (Compact) | Half-height display |
-
-US National Weather Service (NWS) alerts are also supported with similar severity mapping.
+| **Watch** | Colored + Dashed | Same colors, dashed border |
+| **Statement** | ⚫ Grey | Compact half-height display |
 
 ---
 
-### 📢 Sponsor Management
+## 📢 Sponsor Management
 
-The system features a **dynamic "watch folder" engine**. You can add, remove, or update sponsor images in real-time without restarting the stream.
+Dynamic "watch folder" system for sponsor logos:
 
-* **⚡ Auto-Resizing:**
-    Don't worry about pixel dimensions. The system automatically scales any image you drop in (4K, 1080p, or irregular sizes) to fit the overlay area perfectly while maintaining the correct aspect ratio.
-* **🔄 Top-Left (Partner Rotation):**
-    * *Behavior:* Displays images one by one in a continuous, endless loop.
-    * *Best for:* Primary sponsors, partner logos, or station identification.
-* **🔔 Top-Right (Popup / Call-to-Action):**
-    * *Behavior:* Appears for **20 seconds**, then disappears for **5 minutes** (configurable).
-    * *Best for:* Special event announcements, "Like & Subscribe" reminders, or premium spotlight ads.
-* **☀️/🌙 Day & Night Modes:**
-    The system automatically switches between the `DAY` and `NIGHT` folders based on your configured hours (Default: Day starts at 6 AM, Night starts at 8 PM).
-* **Supported Formats:** `.png`, `.jpg`, `.jpeg`
-
----
-### 🛠️ Advanced Configuration
-
-These variables can be added to your Docker template or Compose file to fine-tune the stream.
-
-#### Hardware & Encoding
-
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `HARDWARE_ACCEL` | `true` | Set to `false` for software encoding (no Intel GPU required) |
-| `VAAPI_DEVICE` | `/dev/dri/renderD128` | VAAPI render device path (advanced) |
-| `SOFTWARE_PRESET` | `faster` | x264 preset when using software encoding: `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium` |
-| `SOFTWARE_CRF` | `23` | x264 quality (lower = better, 18-28 typical). Only used with software encoding. |
-
-#### Video Output
-
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `SCALING_MODE` | `fill` | Set to `fill` to zoom/crop 4:3 cameras to 16:9. Set to `fit` to keep original ratio with bars. |
-| `VIDEO_BITRATE` | `14M` | Output stream quality. |
-| `VIDEO_FPS` | `30` | Output framerate. |
-
-#### Weather & Alerts
-
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `ALERTS_UPDATE_INTERVAL` | `900` | How often (in seconds) to check for new weather/alerts data. |
-| `CAMERA_HEADING` | `N` | Rotates the wind arrow. Accepts compass direction (`N`, `NE`, `SW`) or degrees (`0`-`360`). |
-| `WEATHER_DEBUG` | `false` | Set to `true` to enable detailed logs in `/config/weather_debug.log`. |
-| `FLASH_ON_DURATION` | `0.7` | Seconds the red warning flash "on" state is visible. |
-| `FLASH_OFF_DURATION` | `0.3` | Seconds the red warning flash "off" state is visible. |
-
-#### YouTube
-
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `YOUTUBE_WIDTH` | `2560` | Output video width (2560 for 1440p, 1920 for 1080p). |
-| `YOUTUBE_HEIGHT` | `1440` | Output video height. |
-| `YOUTUBE_BITRATE` | `4500k` | Upload bitrate. Increase for 1440p/4K streams (e.g., `8000k`). |
-
-#### Streaming
-
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `ENABLE_LOCAL_STREAM` | `false` | Set to `true` to enable local RTSP viewing and use MediaMTX mode. |
-| `AUDIO_API_KEY` | *None* | **Recommended:** Set a password/key to secure the Audio API. |
-
-#### Sponsor Overlays
-
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `SCALE_TL` | `500` | Max width (px) of Top-Left images. |
-| `SCALE_TR` | `400` | Max width (px) of Top-Right images. |
-| `DAY_START_HOUR` | `6` | Hour (0-23) when Day mode begins. |
-| `DAY_END_HOUR` | `20` | Hour (0-23) when Night mode begins. |
-| `OVERLAYAD_ROTATE_TIMER` | `30` | How many seconds each Top-Left ad displays. |
-| `TR_SHOW_SECONDS` | `20` | How long Top-Right ads are visible. |
-| `TR_HIDE_SECONDS` | `300` | How long Top-Right ads are hidden. |
+- **Auto-Resizing** — Any image size automatically scaled to fit
+- **Top-Left** — Continuous rotation loop (primary sponsors)
+- **Top-Right** — Popup style, 20s visible / 5min hidden (CTAs)
+- **Day/Night** — Automatic switching based on configured hours
+- **Formats:** PNG, JPG, JPEG
 
 ---
 
-### 🎛️ Audio Control API
+## 🛠️ Advanced Configuration
 
-You can mute or unmute the YouTube stream remotely (e.g., via Home Assistant or a Stream Deck). If you set an `AUDIO_API_KEY`, you must provide it in the header.
+### Hardware & Encoding
 
-| Action | Command Example (with API Key) |
-| :--- | :--- |
-| **Check Status** | `curl -H "X-API-Key: YOUR_KEY" http://YOUR_IP:9998/audio/status` |
-| **Enable Audio** | `curl -X POST -H "X-API-Key: YOUR_KEY" http://YOUR_IP:9998/audio/unmute` |
-| **Mute Audio** | `curl -X POST -H "X-API-Key: YOUR_KEY" http://YOUR_IP:9998/audio/mute` |
-| **Toggle** | `curl -X POST -H "X-API-Key: YOUR_KEY" http://YOUR_IP:9998/audio/toggle` |
-| **Health Check** | `curl http://YOUR_IP:9998/health` |
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `HARDWARE_ACCEL` | `true` | `false` for software encoding |
+| `VAAPI_DEVICE` | `/dev/dri/renderD128` | VAAPI device path |
+| `SOFTWARE_PRESET` | `faster` | x264 preset (ultrafast→medium) |
+| `SOFTWARE_CRF` | `23` | Quality (lower=better, 18-28) |
+
+### Video Output
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `SCALING_MODE` | `fill` | `fill` or `fit` |
+| `VIDEO_BITRATE` | `14M` | Output bitrate |
+| `VIDEO_FPS` | `30` | Framerate |
+
+### YouTube
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `YOUTUBE_URL` | `rtmp://a.rtmp.youtube.com/live2` | RTMP ingest |
+| `YOUTUBE_KEY` | - | Stream key |
+| `YOUTUBE_WIDTH` | `2560` | Output width |
+| `YOUTUBE_HEIGHT` | `1440` | Output height |
+| `YOUTUBE_BITRATE` | `4500k` | Upload bitrate |
+
+### Self-Healing Watchdog
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `WATCHDOG_ENABLED` | `false` | Enable watchdog |
+| `WATCHDOG_STATUS_URL` | - | Status endpoint URL |
+| `WATCHDOG_CHECK_INTERVAL` | `30` | Check interval (seconds) |
+| `WATCHDOG_INITIAL_DELAY` | `10` | Initial backoff delay |
+| `WATCHDOG_MAX_DELAY` | `900` | Max backoff (15 min) |
+| `WATCHDOG_STABILITY_THRESHOLD` | `30` | Stability time to reset backoff |
+
+### Discord Notifications
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `DISCORD_WEBHOOK_URL` | - | Webhook URL |
+| `DISCORD_USER_ID` | - | Your user ID for @mentions |
+
+### YouTube API
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `YOUTUBE_CLIENT_ID` | - | OAuth Client ID |
+| `YOUTUBE_CLIENT_SECRET` | - | OAuth Client Secret |
+| `YOUTUBE_REFRESH_TOKEN` | - | OAuth Refresh Token |
+
+### Weather & Alerts
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `WEATHER_LAT` | - | Latitude |
+| `WEATHER_LON` | - | Longitude |
+| `WEATHER_LOCATION` | - | Display name |
+| `WEATHER_TIMEZONE` | `America/Toronto` | Timezone |
+| `CAMERA_HEADING` | `N` | Wind arrow direction |
+| `ALERTS_UPDATE_INTERVAL` | `900` | Update interval (seconds) |
+
+### Sponsor Overlays
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `SCALE_TL` | `500` | Top-left max width |
+| `SCALE_TR` | `400` | Top-right max width |
+| `DAY_START_HOUR` | `6` | Day mode start |
+| `DAY_END_HOUR` | `20` | Night mode start |
+| `OVERLAYAD_ROTATE_TIMER` | `30` | Top-left rotation (seconds) |
+| `TR_SHOW_SECONDS` | `20` | Top-right visible time |
+| `TR_HIDE_SECONDS` | `300` | Top-right hidden time |
 
 ---
 
-### 📋 Changelog
+## 🎛️ Audio Control API
 
-#### v2.7 - Direct-to-YouTube Mode & Extended Alert Classification
-* **New:** Direct-to-YouTube mode - single FFmpeg pipeline when local preview not needed
-* **New:** Extended Environment Canada alert classification (Warnings, Watches, Advisories, Statements)
-* **New:** Flashing red warnings for extreme weather alerts
-* **New:** Compact half-height display for weather statements
-* **New:** Proper color coding matching official EC alert levels
-* **New:** Dashed border pattern for Watch alerts (vs solid for Warnings)
-* **Improved:** MediaMTX disabled entirely in direct mode (saves ~50MB RAM)
-* **Improved:** Unused MediaMTX protocols disabled (RTMP, HLS, WebRTC, SRT)
-* **Fixed:** VAAPI crash when overlay dimensions changed dynamically
-* **Fixed:** Gap between compact statement bar and weather widget
+Control stream audio via HTTP:
 
-#### v2.6 - Optional Hardware Acceleration & Alert Timestamps
-* **New:** Optional software encoding (`HARDWARE_ACCEL=false`) - no Intel GPU required
-* **New:** Auto-fallback to software encoding if VAAPI fails
-* **New:** Alert overlays now display "Issued" timestamps with dynamic text scaling
-* **Improved:** Combined weather + alert overlay reduces FFmpeg operations
-* **Improved:** Font and icon caching for better performance
-* **Improved:** Hash-based ad updates (only re-process changed files)
-* **Improved:** Graceful shutdown with proper signal handling
-* **Fixed:** Race condition during DAY/NIGHT mode transitions
+| Action | Command |
+|:-------|:--------|
+| Status | `curl -H "X-API-Key: KEY" http://IP:9998/audio/status` |
+| Unmute | `curl -X POST -H "X-API-Key: KEY" http://IP:9998/audio/unmute` |
+| Mute | `curl -X POST -H "X-API-Key: KEY" http://IP:9998/audio/mute` |
+| Toggle | `curl -X POST -H "X-API-Key: KEY" http://IP:9998/audio/toggle` |
+| Health | `curl http://IP:9998/health` |
 
-#### v2.5 - Smart Alert Stacking
-* Initial release with stacked weather/alert overlays
-* Environment Canada and NWS alert support
-* Dynamic sponsor rotation system
+> Set `AUDIO_API_KEY` to require authentication. Health endpoint always works without auth.
 
 ---
+
+## 🔧 Troubleshooting
+
+### Watchdog Issues
+
+**"YouTube API credentials not configured"**
+- This is informational, not an error. Auto-PUBLIC is optional.
+
+**Watchdog not starting**
+- Verify `WATCHDOG_ENABLED=true`
+- Verify `YOUTUBE_KEY` is set
+- Check `WATCHDOG_STATUS_URL` is accessible
+
+### YouTube API Issues
+
+**`redirect_uri_mismatch`**
+- Add `https://developers.google.com/oauthplayground` to OAuth credentials redirect URIs
+
+**`invalid_scope`**
+- Don't use dropdown in OAuth Playground
+- Manually type: `https://www.googleapis.com/auth/youtube`
+
+**`insufficient authentication scopes`**
+- Regenerate refresh token with correct scope
+
+**Token expires after 7 days**
+- Publish your app in OAuth consent screen, OR
+- Regenerate token weekly
+
+### Stream Issues
+
+**"Could not find ref with POC" errors**
+- Normal during startup, usually resolves quickly
+
+**"deprecated pixel format" warnings**
+- Harmless FFmpeg warning, ignore
+
+**Container shows "unhealthy"**
+- Check if Audio API is responding: `curl http://IP:9998/health`
+- Check FFmpeg is running: `docker exec vantagecam ps aux | grep ffmpeg`
+
+---
+
+## 📋 Changelog
+
+### v2.8 - Self-Healing Watchdog & Auto-Recovery
+- **New:** Self-healing watchdog with automatic stream recovery
+- **New:** YouTube API integration for auto-PUBLIC restoration
+- **New:** Discord webhook notifications for stream events
+- **New:** Startup validation for credentials
+- **New:** FFmpeg progress monitoring for stall detection
+- **New:** Exponential backoff with jitter
+- **New:** State persistence across restarts
+- **Improved:** Graceful FFmpeg shutdown (SIGINT → SIGTERM → SIGKILL)
+- **Fixed:** Health endpoint works with API key enabled
+
+### v2.7 - Direct-to-YouTube Mode
+- **New:** Direct-to-YouTube single-pipeline mode
+- **New:** Extended alert classification
+- **New:** Flashing red warnings
+- **New:** Compact statement display
+- **Improved:** MediaMTX disabled in direct mode
+
+### v2.6 - Optional Hardware Acceleration
+- **New:** Software encoding option
+- **New:** Auto-fallback to software mode
+- **New:** Alert timestamps
+- **Improved:** Combined weather+alert overlay
+
+### v2.5 - Smart Alert Stacking
+- Initial release with stacked overlays
+- Environment Canada and NWS support
+- Dynamic sponsor rotation
+
+---
+
+## 📄 License
+
+MIT License - See [LICENSE](LICENSE) for details.
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! Please open an issue or submit a PR.
+
+---
+
+## 💬 Support
+
+- **Issues:** [GitHub Issues](https://github.com/McGeaverBeaver/VantageCamLive/issues)
+- **Demo:** [https://simcoelocal.ca/](https://simcoelocal.ca/)
