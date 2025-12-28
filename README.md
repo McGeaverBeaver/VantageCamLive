@@ -4,7 +4,7 @@
 
 **OpenSource Automated Live Stream Broadcaster with Weather, Smart Alerts & Self-Healing**
 
-> 🎥 **See it in action:** [https://simcoelocal.ca/](https://simcoelocal.ca/)
+> 🎥 **See it in action:** [https://simcoelocal.com/](https://simcoelocal.com/)
 
 Transform a standard security camera feed into a professional broadcast without the hassle. Vantage Cam Live runs entirely in Docker and handles all the heavy lifting for you:
 
