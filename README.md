@@ -568,4 +568,4 @@ Contributions welcome! Please open an issue or submit a PR.
 ## 💬 Support
 
 - **Issues:** [GitHub Issues](https://github.com/McGeaverBeaver/VantageCamLive/issues)
-- **Demo:** [https://simcoelocal.ca/](https://simcoelocal.ca/)
+- **Demo:** [https://simcoelocal.com/](https://simcoelocal.com/)
