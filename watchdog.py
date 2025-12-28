@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-VantageCam Self-Healing Watchdog
+VantageCam Self-Healing Watchdog v2.8.1
 Monitors YouTube stream status and automatically recovers failed streams.
 Also handles setting the broadcast to PUBLIC after recovery.
+
+v2.8.1 Changes:
+- Added RTSP source health check before attempting recovery
+- Extended verification window (120s default, configurable)
+- Added verbose logging of status check responses
+- Added RTSP_SOURCE logging at startup and during checks
+- Added pre-flight RTSP connectivity test before FFmpeg restart
+- Smarter recovery: won't restart if RTSP source is down
 """
 
 import os
@@ -13,11 +21,12 @@ import json
 import signal
 import random
 import subprocess
+import socket
 import logging
 from datetime import datetime, timedelta
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 # ==============================================================================
 #  CONFIGURATION (from environment variables)
@@ -30,6 +39,18 @@ CHECK_INTERVAL = int(os.getenv("WATCHDOG_CHECK_INTERVAL", "30"))
 INITIAL_DELAY = int(os.getenv("WATCHDOG_INITIAL_DELAY", "10"))
 MAX_DELAY = int(os.getenv("WATCHDOG_MAX_DELAY", "900"))  # 15 minutes max
 STABILITY_THRESHOLD = int(os.getenv("WATCHDOG_STABILITY_THRESHOLD", "30"))
+
+# RTSP Source (for health checking)
+RTSP_SOURCE = os.getenv("RTSP_SOURCE", "")
+
+# Verification settings (NEW)
+VERIFICATION_TIMEOUT = int(os.getenv("WATCHDOG_VERIFICATION_TIMEOUT", "120"))  # Extended from 60s
+RTSP_CHECK_ENABLED = os.getenv("WATCHDOG_RTSP_CHECK", "true").lower() == "true"
+VERBOSE_LOGGING = os.getenv("WATCHDOG_VERBOSE", "true").lower() == "true"
+
+# Initial startup delay - how long to wait before first check after boot
+# YouTube can take 3-5+ minutes to recognize a new ingest
+STARTUP_DELAY = int(os.getenv("WATCHDOG_STARTUP_DELAY", "180"))  # Default 3 minutes
 
 # YouTube API settings (for setting broadcast to PUBLIC)
 YOUTUBE_CLIENT_ID = os.getenv("YOUTUBE_CLIENT_ID", "")
@@ -51,7 +72,7 @@ LOG_FILE = "/config/watchdog.log"
 # ==============================================================================
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG if VERBOSE_LOGGING else logging.INFO,
     format='[%(asctime)s] [Watchdog] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
@@ -60,6 +81,139 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# ==============================================================================
+#  RTSP SOURCE HEALTH CHECK (NEW)
+# ==============================================================================
+
+def parse_rtsp_url(rtsp_url):
+    """Parse RTSP URL to extract host and port"""
+    try:
+        # Handle rtsp://user:pass@host:port/path format
+        if '@' in rtsp_url:
+            # Split off credentials
+            parts = rtsp_url.split('@')
+            host_part = parts[1]
+        else:
+            host_part = rtsp_url.replace('rtsp://', '')
+
+        # Extract host and port
+        if '/' in host_part:
+            host_port = host_part.split('/')[0]
+        else:
+            host_port = host_part
+
+        if ':' in host_port:
+            host, port = host_port.rsplit(':', 1)
+            port = int(port)
+        else:
+            host = host_port
+            port = 554  # Default RTSP port
+
+        return host, port
+    except Exception as e:
+        logger.error(f"Failed to parse RTSP URL: {e}")
+        return None, None
+
+
+def check_rtsp_source_health():
+    """
+    Check if the RTSP source is reachable via TCP connection.
+    Returns: 'healthy', 'unreachable', or 'unknown'
+    """
+    if not RTSP_SOURCE:
+        logger.warning("RTSP_SOURCE not configured - skipping RTSP health check")
+        return 'unknown'
+
+    if not RTSP_CHECK_ENABLED:
+        return 'unknown'
+
+    host, port = parse_rtsp_url(RTSP_SOURCE)
+    if not host:
+        return 'unknown'
+
+    # Mask credentials in log output
+    safe_url = RTSP_SOURCE
+    if '@' in safe_url:
+        # Replace user:pass with ***
+        parts = safe_url.split('@')
+        protocol = parts[0].split('://')[0]
+        safe_url = f"{protocol}://***@{parts[1]}"
+
+    logger.info(f"Checking RTSP source: {safe_url} ({host}:{port})")
+
+    try:
+        # TCP connection test with 10 second timeout
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        result = sock.connect_ex((host, port))
+        sock.close()
+
+        if result == 0:
+            logger.info(f"RTSP source HEALTHY - TCP connection to {host}:{port} succeeded")
+            return 'healthy'
+        else:
+            logger.warning(f"RTSP source UNREACHABLE - TCP connection to {host}:{port} failed (error: {result})")
+            return 'unreachable'
+
+    except socket.timeout:
+        logger.warning(f"RTSP source UNREACHABLE - TCP connection to {host}:{port} timed out")
+        return 'unreachable'
+    except socket.gaierror as e:
+        logger.warning(f"RTSP source UNREACHABLE - DNS resolution failed for {host}: {e}")
+        return 'unreachable'
+    except Exception as e:
+        logger.error(f"RTSP health check error: {e}")
+        return 'unknown'
+
+
+def check_rtsp_with_ffprobe():
+    """
+    More thorough RTSP check using ffprobe (if available).
+    Returns: 'healthy', 'unreachable', or 'unknown'
+    """
+    if not RTSP_SOURCE:
+        return 'unknown'
+
+    try:
+        # Use ffprobe with a short timeout to test RTSP stream
+        result = subprocess.run(
+            ['ffprobe', '-v', 'quiet', '-rtsp_transport', 'tcp',
+             '-timeout', '5000000',  # 5 seconds in microseconds
+             '-i', RTSP_SOURCE,
+             '-show_entries', 'stream=codec_type',
+             '-of', 'json'],
+            capture_output=True,
+            text=True,
+            timeout=15
+        )
+
+        if result.returncode == 0:
+            # Parse output to verify we got stream info
+            try:
+                data = json.loads(result.stdout)
+                if data.get('streams'):
+                    logger.info(f"RTSP ffprobe check: HEALTHY - Found {len(data['streams'])} stream(s)")
+                    return 'healthy'
+            except:
+                pass
+            logger.info("RTSP ffprobe check: HEALTHY - Stream accessible")
+            return 'healthy'
+        else:
+            logger.warning(f"RTSP ffprobe check: UNREACHABLE - ffprobe returned {result.returncode}")
+            if result.stderr:
+                logger.debug(f"ffprobe stderr: {result.stderr[:200]}")
+            return 'unreachable'
+
+    except subprocess.TimeoutExpired:
+        logger.warning("RTSP ffprobe check: UNREACHABLE - timed out after 15s")
+        return 'unreachable'
+    except FileNotFoundError:
+        logger.debug("ffprobe not available, using TCP check only")
+        return 'unknown'
+    except Exception as e:
+        logger.error(f"RTSP ffprobe check error: {e}")
+        return 'unknown'
 
 # ==============================================================================
 #  DISCORD NOTIFICATIONS
@@ -72,13 +226,13 @@ def send_discord_alert(title, message, color=16711680, mention_user=True):
     """
     if not DISCORD_WEBHOOK_URL:
         return False
-    
+
     try:
         # Build the message content
         content = ""
         if mention_user and DISCORD_USER_ID:
             content = f"<@{DISCORD_USER_ID}>"
-        
+
         embed = {
             "title": title,
             "description": message,
@@ -86,20 +240,20 @@ def send_discord_alert(title, message, color=16711680, mention_user=True):
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "footer": {"text": "VantageCam Watchdog"}
         }
-        
+
         payload = {
             "content": content,
             "embeds": [embed]
         }
-        
+
         data = json.dumps(payload).encode()
         req = Request(DISCORD_WEBHOOK_URL, data=data, method='POST')
         req.add_header('Content-Type', 'application/json')
-        req.add_header('User-Agent', 'VantageCam-Watchdog/1.0')
-        
+        req.add_header('User-Agent', 'VantageCam-Watchdog/2.8.1')
+
         with urlopen(req, timeout=10) as response:
             return response.status == 204
-    
+
     except Exception as e:
         logger.error(f"Failed to send Discord alert: {e}")
         return False
@@ -109,7 +263,7 @@ def alert_credential_error(error_type, details):
     """Send Discord alert for credential/API errors"""
     messages = {
         'token_expired': {
-            'title': '?? YouTube API Token Expired',
+            'title': '🔴 YouTube API Token Expired',
             'message': (
                 '**Your YouTube refresh token has expired!**\n\n'
                 'The watchdog cannot set streams to PUBLIC until you regenerate it.\n\n'
@@ -123,7 +277,7 @@ def alert_credential_error(error_type, details):
             )
         },
         'invalid_credentials': {
-            'title': '?? YouTube API Credentials Invalid',
+            'title': '🔴 YouTube API Credentials Invalid',
             'message': (
                 '**Your YouTube API credentials are invalid!**\n\n'
                 'Check that `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET` are correct.\n\n'
@@ -131,7 +285,7 @@ def alert_credential_error(error_type, details):
             )
         },
         'insufficient_scope': {
-            'title': '?? YouTube API Scope Error',
+            'title': '🟠 YouTube API Scope Error',
             'message': (
                 '**Your refresh token has insufficient permissions!**\n\n'
                 'The token was generated with read-only scope.\n\n'
@@ -143,11 +297,11 @@ def alert_credential_error(error_type, details):
             )
         },
         'api_error': {
-            'title': '?? YouTube API Error',
+            'title': '🔴 YouTube API Error',
             'message': f'**An error occurred with the YouTube API:**\n\n```{details}```'
         },
         'stream_offline': {
-            'title': '?? Stream Went Offline',
+            'title': '🟠 Stream Went Offline',
             'message': (
                 '**Your YouTube stream went offline!**\n\n'
                 'The watchdog is attempting to recover the stream.\n\n'
@@ -155,22 +309,38 @@ def alert_credential_error(error_type, details):
             )
         },
         'stream_recovered': {
-            'title': '?? Stream Recovered',
+            'title': '🟢 Stream Recovered',
             'message': (
                 '**Your YouTube stream is back online!**\n\n'
                 f'```{details}```'
             )
+        },
+        'rtsp_down': {
+            'title': '🔴 RTSP Source Unreachable',
+            'message': (
+                '**The camera RTSP source is unreachable!**\n\n'
+                'The watchdog will wait for the source to come back online before attempting recovery.\n\n'
+                f'```{details}```'
+            )
+        },
+        'rtsp_recovered': {
+            'title': '🟢 RTSP Source Recovered',
+            'message': (
+                '**The camera RTSP source is back online!**\n\n'
+                'Proceeding with stream recovery.\n\n'
+                f'```{details}```'
+            )
         }
     }
-    
+
     msg = messages.get(error_type, {
-        'title': '?? VantageCam Alert',
+        'title': '⚠️ VantageCam Alert',
         'message': details
     })
-    
+
     # Use green color for recovery, red for errors, orange for warnings
-    color = 65280 if error_type == 'stream_recovered' else (16776960 if 'scope' in error_type or error_type == 'stream_offline' else 16711680)
-    
+    color = 65280 if 'recovered' in error_type else (16776960 if 'scope' in error_type or error_type == 'stream_offline' else 16711680)
+
     send_discord_alert(msg['title'], msg['message'], color=color)
 
 # ==============================================================================
@@ -184,8 +354,9 @@ class WatchdogState:
         self.last_healthy = None
         self.last_restart = None
         self.total_restarts = 0
+        self.rtsp_was_down = False  # Track RTSP state for alerting
         self.load()
-    
+
     def load(self):
         """Load state from disk"""
         try:
@@ -200,7 +371,7 @@ class WatchdogState:
                         self.last_restart = datetime.fromisoformat(data['last_restart'])
         except Exception as e:
             logger.warning(f"Could not load state: {e}")
-    
+
     def save(self):
         """Save state to disk"""
         try:
@@ -214,13 +385,13 @@ class WatchdogState:
                 json.dump(data, f)
         except Exception as e:
             logger.warning(f"Could not save state: {e}")
-    
+
     def reset_backoff(self):
         """Reset backoff counter after stable connection"""
         self.attempt = 0
         self.last_healthy = datetime.now()
         self.save()
-    
+
     def increment_attempt(self):
         """Increment attempt counter for backoff"""
         self.attempt += 1
@@ -239,7 +410,7 @@ def get_access_token():
     if not all([YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN]):
         logger.warning("YouTube API credentials not configured - cannot set stream to PUBLIC")
         return None
-    
+
     try:
         data = urlencode({
             'client_id': YOUTUBE_CLIENT_ID,
@@ -247,14 +418,14 @@ def get_access_token():
             'refresh_token': YOUTUBE_REFRESH_TOKEN,
             'grant_type': 'refresh_token'
         }).encode()
-        
+
         req = Request('https://oauth2.googleapis.com/token', data=data, method='POST')
         req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-        
+
         with urlopen(req, timeout=10) as response:
             result = json.loads(response.read().decode())
             return result.get('access_token')
-    
+
     except HTTPError as e:
         error_body = e.read().decode()
         try:
@@ -262,7 +433,7 @@ def get_access_token():
             error_desc = error_data.get('error_description', error_data.get('error', 'Unknown error'))
         except:
             error_desc = error_body
-        
+
         if e.code == 400:
             if 'invalid_grant' in error_body or 'Token has been expired' in error_body:
                 logger.error("YouTube API: Refresh token EXPIRED! Regenerate it in OAuth Playground.")
@@ -280,7 +451,7 @@ def get_access_token():
             logger.error(f"YouTube API: HTTP {e.code} - {error_desc}")
             alert_credential_error('api_error', f"HTTP {e.code}: {error_desc}")
         return None
-    
+
     except Exception as e:
         logger.error(f"Failed to get access token: {e}")
         return None
@@ -294,13 +465,13 @@ def get_active_broadcast(access_token):
             'broadcastStatus': 'active',
             'broadcastType': 'all'
         })
-        
+
         req = Request(f'https://www.googleapis.com/youtube/v3/liveBroadcasts?{params}')
         req.add_header('Authorization', f'Bearer {access_token}')
-        
+
         with urlopen(req, timeout=10) as response:
             result = json.loads(response.read().decode())
-            
+
             if result.get('items'):
                 broadcast = result['items'][0]
                 return {
@@ -309,7 +480,7 @@ def get_active_broadcast(access_token):
                     'privacy': broadcast['status']['privacyStatus']
                 }
         return None
-    
+
     except Exception as e:
         logger.error(f"Failed to get active broadcast: {e}")
         return None
@@ -325,7 +496,7 @@ def set_broadcast_public(access_token, broadcast_id, title):
                 'privacyStatus': 'public'
             }
         }).encode()
-        
+
         params = urlencode({'part': 'status'})
         req = Request(
             f'https://www.googleapis.com/youtube/v3/liveBroadcasts?{params}',
@@ -334,13 +505,13 @@ def set_broadcast_public(access_token, broadcast_id, title):
         )
         req.add_header('Authorization', f'Bearer {access_token}')
         req.add_header('Content-Type', 'application/json')
-        
+
         with urlopen(req, timeout=10) as response:
             result = json.loads(response.read().decode())
             new_privacy = result.get('status', {}).get('privacyStatus')
             logger.info(f"Broadcast visibility updated to: {new_privacy}")
             return new_privacy == 'public'
-    
+
     except HTTPError as e:
         error_body = e.read().decode()
         try:
@@ -350,7 +521,7 @@ def set_broadcast_public(access_token, broadcast_id, title):
         except:
             error_msg = error_body
             error_reason = ''
-        
+
         if e.code == 401:
             logger.error("YouTube API: Access token expired or invalid!")
             alert_credential_error('token_expired', error_msg)
@@ -365,7 +536,7 @@ def set_broadcast_public(access_token, broadcast_id, title):
             logger.error(f"Failed to set broadcast public: {e.code} - {error_msg}")
             alert_credential_error('api_error', f"HTTP {e.code}: {error_msg}")
         return False
-    
+
     except Exception as e:
         logger.error(f"Failed to set broadcast public: {e}")
         return False
@@ -376,68 +547,82 @@ def ensure_broadcast_public():
     access_token = get_access_token()
     if not access_token:
         return False
-    
+
     broadcast = get_active_broadcast(access_token)
     if not broadcast:
         logger.warning("No active broadcast found")
         return False
-    
+
     logger.info(f"Active broadcast: '{broadcast['title']}' - Privacy: {broadcast['privacy']}")
-    
+
     if broadcast['privacy'] == 'public':
         logger.info("Broadcast is already PUBLIC")
         return True
-    
+
     logger.info(f"Broadcast is {broadcast['privacy'].upper()}, changing to PUBLIC...")
     success = set_broadcast_public(access_token, broadcast['id'], broadcast['title'])
-    
+
     if success:
         send_discord_alert(
-            "?? Broadcast Set to PUBLIC",
+            "🟢 Broadcast Set to PUBLIC",
             f"**{broadcast['title']}**\n\nVisibility changed from `{broadcast['privacy']}` to `public`.",
             color=65280,  # Green
             mention_user=False
         )
-    
+
     return success
 
 # ==============================================================================
-#  STREAM STATUS CHECKING
+#  STREAM STATUS CHECKING (IMPROVED)
 # ==============================================================================
 
 def check_stream_status():
     """
     Check if the stream is live by querying the PHP status endpoint.
     Returns: 'live', 'offline', or 'error'
+
+    v2.8.1: Now logs full response for debugging
     """
     if not STATUS_URL:
         logger.warning("WATCHDOG_STATUS_URL not configured")
         return 'error'
-    
+
     try:
+        logger.debug(f"Checking status URL: {STATUS_URL}")
         req = Request(STATUS_URL)
-        req.add_header('User-Agent', 'VantageCam-Watchdog/1.0')
-        
+        req.add_header('User-Agent', 'VantageCam-Watchdog/2.8.1')
+
         with urlopen(req, timeout=15) as response:
-            data = json.loads(response.read().decode())
+            raw_data = response.read().decode()
+            data = json.loads(raw_data)
             status = data.get('status', 'unknown')
-            
+
+            # Log the full response for debugging
+            if VERBOSE_LOGGING:
+                viewers = data.get('viewers', 'N/A')
+                title = data.get('title', 'N/A')
+                logger.debug(f"Status API response: status={status}, viewers={viewers}, title={title}")
+
             if status == 'live':
                 viewers = data.get('viewers', 0)
-                logger.debug(f"Stream is LIVE with {viewers} viewers")
+                logger.info(f"Stream is LIVE with {viewers} viewers")
                 return 'live'
             elif status == 'offline':
-                logger.debug("Stream is OFFLINE")
+                logger.debug("Stream status: OFFLINE")
                 return 'offline'
-            else:
-                logger.warning(f"Unknown status from API: {status}")
+            elif status == 'error':
+                error_msg = data.get('message', 'Unknown error')
+                logger.warning(f"Status API returned error: {error_msg}")
                 return 'error'
-    
+            else:
+                logger.warning(f"Unknown status from API: {status} (full response: {raw_data[:200]})")
+                return 'error'
+
     except HTTPError as e:
-        logger.error(f"HTTP error checking status: {e.code}")
+        logger.error(f"HTTP error checking status: {e.code} - URL: {STATUS_URL}")
         return 'error'
     except URLError as e:
-        logger.error(f"URL error checking status: {e.reason}")
+        logger.error(f"URL error checking status: {e.reason} - URL: {STATUS_URL}")
         return 'error'
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON from status endpoint: {e}")
@@ -454,23 +639,24 @@ def check_ffmpeg_progress():
     """
     try:
         if not os.path.exists(PROGRESS_FILE):
+            logger.debug("FFmpeg progress file does not exist")
             return False
-        
+
         # Check file age
         file_age = time.time() - os.path.getmtime(PROGRESS_FILE)
         if file_age > 60:  # Progress file older than 60 seconds
             logger.warning(f"Progress file is {file_age:.0f}s old - FFmpeg may be stalled")
             return False
-        
+
         # Check frame count advancement
         with open(PROGRESS_FILE, 'r') as f:
             content = f.read()
-            
+
         # Look for frame count
         for line in content.split('\n'):
             if line.startswith('frame='):
                 frame = int(line.split('=')[1])
-                
+
                 # Compare to last known frame
                 last_frame_file = "/tmp/watchdog_last_frame"
                 last_frame = 0
@@ -480,20 +666,21 @@ def check_ffmpeg_progress():
                             last_frame = int(f.read().strip())
                         except:
                             pass
-                
+
                 # Save current frame
                 with open(last_frame_file, 'w') as f:
                     f.write(str(frame))
-                
+
                 # If frame hasn't advanced and file is > 10s old, stalled
                 if frame == last_frame and file_age > 10:
                     logger.warning(f"FFmpeg stalled at frame {frame}")
                     return False
-                
+
+                logger.debug(f"FFmpeg progress: frame={frame}, age={file_age:.1f}s")
                 return True
-        
+
         return True  # Progress file exists but no frame info yet
-        
+
     except Exception as e:
         logger.error(f"Error checking FFmpeg progress: {e}")
         return True  # Don't trigger restart on check errors
@@ -535,14 +722,14 @@ def stop_ffmpeg_gracefully():
         except:
             pass
         return
-    
+
     logger.info(f"Stopping FFmpeg (PID: {pid}) gracefully...")
-    
+
     try:
         # Step 1: SIGINT (like pressing 'q')
         os.kill(pid, signal.SIGINT)
         logger.info("Sent SIGINT to FFmpeg")
-        
+
         # Wait up to 5 seconds for graceful shutdown
         for _ in range(10):
             time.sleep(0.5)
@@ -551,76 +738,152 @@ def stop_ffmpeg_gracefully():
             except ProcessLookupError:
                 logger.info("FFmpeg stopped gracefully")
                 return
-        
+
         # Step 2: SIGTERM
         logger.warning("FFmpeg didn't stop, sending SIGTERM...")
         os.kill(pid, signal.SIGTERM)
-        time.sleep(2)
-        
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            logger.info("FFmpeg stopped after SIGTERM")
-            return
-        
+
+        # Wait up to 3 more seconds
+        for _ in range(6):
+            time.sleep(0.5)
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                logger.info("FFmpeg stopped after SIGTERM")
+                return
+
         # Step 3: SIGKILL (last resort)
         logger.warning("FFmpeg still running, sending SIGKILL...")
         os.kill(pid, signal.SIGKILL)
         time.sleep(1)
-        logger.info("Sent SIGKILL to FFmpeg")
-        
+        logger.info("FFmpeg killed")
+
     except ProcessLookupError:
         logger.info("FFmpeg already stopped")
     except Exception as e:
         logger.error(f"Error stopping FFmpeg: {e}")
 
 
-def calculate_backoff_delay():
+def get_backoff_delay():
     """
-    Calculate delay using exponential backoff with jitter.
-    Formula: min(base * 2^attempt, max_delay) +/- 30% jitter
+    Calculate backoff delay with exponential increase and jitter.
     """
-    base_delay = INITIAL_DELAY
-    delay = min(base_delay * (2 ** state.attempt), MAX_DELAY)
-    
-    # Add +/- 30% jitter
-    jitter = delay * 0.3 * (random.random() * 2 - 1)
-    final_delay = delay + jitter
-    
-    return max(5, int(final_delay))  # Minimum 5 seconds
+    base_delay = INITIAL_DELAY * (2 ** state.attempt)
+
+    # Add jitter (±30%)
+    jitter = base_delay * 0.3
+    delay = base_delay + random.uniform(-jitter, jitter)
+
+    # Cap at max delay
+    delay = min(delay, MAX_DELAY)
+
+    return int(delay)
+
+
+def wait_for_rtsp_source(max_wait=300):
+    """
+    Wait for RTSP source to become available.
+    Returns True if source came back, False if timed out.
+
+    v2.8.1: New function to wait for camera to come back online
+    """
+    if not RTSP_SOURCE or not RTSP_CHECK_ENABLED:
+        return True
+
+    logger.info(f"Waiting up to {max_wait}s for RTSP source to become available...")
+    start_time = time.time()
+    check_count = 0
+
+    while (time.time() - start_time) < max_wait:
+        check_count += 1
+
+        # Try TCP check first (faster)
+        tcp_status = check_rtsp_source_health()
+
+        if tcp_status == 'healthy':
+            # Double-check with ffprobe if TCP succeeded
+            ffprobe_status = check_rtsp_with_ffprobe()
+            if ffprobe_status == 'healthy':
+                logger.info(f"RTSP source recovered after {check_count} checks ({time.time() - start_time:.0f}s)")
+
+                # Alert if it was previously down
+                if state.rtsp_was_down:
+                    alert_credential_error('rtsp_recovered',
+                        f"Camera RTSP source is back online after {time.time() - start_time:.0f} seconds")
+                    state.rtsp_was_down = False
+
+                return True
+            elif ffprobe_status == 'unknown':
+                # ffprobe not available, trust TCP check
+                logger.info(f"RTSP source recovered (TCP check) after {check_count} checks")
+                if state.rtsp_was_down:
+                    alert_credential_error('rtsp_recovered',
+                        f"Camera RTSP source is back online after {time.time() - start_time:.0f} seconds")
+                    state.rtsp_was_down = False
+                return True
+
+        # Wait 10 seconds between checks
+        elapsed = time.time() - start_time
+        logger.info(f"RTSP source still unreachable (check #{check_count}, {elapsed:.0f}s elapsed)")
+        time.sleep(10)
+
+    logger.warning(f"RTSP source did not recover within {max_wait}s")
+    return False
 
 
 def restart_stream():
     """
-    Restart the stream by stopping FFmpeg and letting start.sh restart it.
-    The start.sh script has a loop that automatically restarts FFmpeg when it exits.
+    Initiate stream restart by stopping FFmpeg and letting start.sh restart it.
+
+    v2.8.1: Now checks RTSP source before attempting restart
     """
     logger.info("=" * 50)
     logger.info("INITIATING STREAM RESTART")
     logger.info("=" * 50)
-    
+
     state.increment_attempt()
-    delay = calculate_backoff_delay()
-    
     logger.info(f"Attempt #{state.attempt} - Total restarts: {state.total_restarts}")
+
+    # Calculate backoff delay
+    delay = get_backoff_delay()
     logger.info(f"Calculated backoff delay: {delay} seconds")
-    
-    # Stop FFmpeg gracefully
+
+    # NEW: Check RTSP source health before restarting
+    if RTSP_CHECK_ENABLED and RTSP_SOURCE:
+        logger.info("Checking RTSP source health before restart...")
+        rtsp_status = check_rtsp_source_health()
+
+        if rtsp_status == 'unreachable':
+            logger.warning("RTSP source is unreachable - waiting for it to come back...")
+
+            # Send alert if this is first detection
+            if not state.rtsp_was_down:
+                safe_url = RTSP_SOURCE
+                if '@' in safe_url:
+                    parts = safe_url.split('@')
+                    protocol = parts[0].split('://')[0]
+                    safe_url = f"{protocol}://***@{parts[1]}"
+
+                alert_credential_error('rtsp_down',
+                    f"RTSP Source: {safe_url}\n"
+                    f"The watchdog will wait for the camera to come back online.")
+                state.rtsp_was_down = True
+
+            # Wait for RTSP to come back (up to 5 minutes)
+            if not wait_for_rtsp_source(300):
+                logger.warning("RTSP source still unreachable - will retry on next loop")
+                return
+        else:
+            logger.info("RTSP source is healthy, proceeding with restart")
+
+    # Stop FFmpeg
     stop_ffmpeg_gracefully()
-    
-    # Wait before allowing restart
+
+    # Wait for backoff period
     logger.info(f"Waiting {delay} seconds before allowing FFmpeg restart...")
     time.sleep(delay)
-    
-    # Clear the progress file to reset monitoring
-    try:
-        if os.path.exists(PROGRESS_FILE):
-            os.remove(PROGRESS_FILE)
-        if os.path.exists("/tmp/watchdog_last_frame"):
-            os.remove("/tmp/watchdog_last_frame")
-    except:
-        pass
-    
+
+    # FFmpeg will auto-restart via start.sh loop
     logger.info("FFmpeg should auto-restart via start.sh loop")
     logger.info("=" * 50)
 
@@ -629,33 +892,36 @@ def verify_stream_recovery():
     """
     Wait for stream to come back online and verify stability.
     Returns True if stream recovered successfully, False otherwise.
+
+    v2.8.1: Extended verification window (default 120s instead of 60s)
     """
     logger.info("Waiting 20 seconds for stream to stabilize...")
     time.sleep(20)
-    
-    logger.info("Verifying stream status for up to 60 seconds...")
+
+    max_wait = VERIFICATION_TIMEOUT
+    logger.info(f"Verifying stream status for up to {max_wait} seconds...")
     stable_count = 0
     check_count = 0
-    max_checks = 12  # 60 seconds / 5 second intervals
-    
+    max_checks = max_wait // 5  # 5 second intervals
+
     while check_count < max_checks:
         status = check_stream_status()
-        
+
         if status == 'live':
             stable_count += 1
             logger.info(f"Stream LIVE (stable count: {stable_count}/{STABILITY_THRESHOLD // 5})")
-            
+
             # Need 30 seconds of stable live status
             if stable_count * 5 >= STABILITY_THRESHOLD:
                 logger.info("[OK] Stream verified stable!")
                 return True
         else:
             stable_count = 0  # Reset if not live
-            logger.warning(f"Stream status: {status}")
-        
+            logger.info(f"Stream status: {status}")
+
         check_count += 1
         time.sleep(5)
-    
+
     logger.warning("Stream did not recover within verification window")
     return False
 
@@ -668,16 +934,16 @@ def validate_youtube_credentials():
     if not all([YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN]):
         logger.info("YouTube API: Not configured (auto-PUBLIC disabled)")
         return True  # Not configured is OK - feature is optional
-    
+
     logger.info("YouTube API: Validating credentials...")
-    
+
     token = get_access_token()
     if not token:
         logger.error("YouTube API: CREDENTIAL VALIDATION FAILED!")
         logger.error("YouTube API: The watchdog will continue but cannot set streams to PUBLIC.")
         logger.error("YouTube API: Check the errors above and fix your credentials.")
         return False
-    
+
     logger.info("YouTube API: Credentials validated successfully!")
     return True
 
@@ -689,21 +955,27 @@ def validate_discord_webhook():
     if not DISCORD_WEBHOOK_URL:
         logger.info("Discord Alerts: Not configured")
         return True
-    
+
     logger.info("Discord Alerts: Testing webhook...")
-    
+
     success = send_discord_alert(
-        "VantageCam Watchdog Started",
-        "The self-healing watchdog is now monitoring your stream.",
+        "🟢 VantageCam Watchdog Started",
+        "The self-healing watchdog is now monitoring your stream.\n\n"
+        f"**Configuration:**\n"
+        f"• Startup delay: {STARTUP_DELAY}s\n"
+        f"• Check interval: {CHECK_INTERVAL}s\n"
+        f"• Verification timeout: {VERIFICATION_TIMEOUT}s\n"
+        f"• RTSP health check: {'Enabled' if RTSP_CHECK_ENABLED else 'Disabled'}\n"
+        f"• Verbose logging: {'Enabled' if VERBOSE_LOGGING else 'Disabled'}",
         color=65280,  # Green
         mention_user=False
     )
-    
+
     if success:
         logger.info("Discord Alerts: Webhook validated successfully!")
     else:
         logger.warning("Discord Alerts: Could not send test message - check webhook URL")
-    
+
     return success
 
 # ==============================================================================
@@ -715,52 +987,70 @@ def run_watchdog():
     if not WATCHDOG_ENABLED:
         logger.info("Watchdog is DISABLED (WATCHDOG_ENABLED=false)")
         return
-    
+
     if not STATUS_URL:
         logger.error("WATCHDOG_STATUS_URL not set - watchdog cannot function")
         return
-    
+
+    # Mask RTSP credentials for logging
+    safe_rtsp = RTSP_SOURCE
+    if RTSP_SOURCE and '@' in RTSP_SOURCE:
+        parts = RTSP_SOURCE.split('@')
+        protocol = parts[0].split('://')[0]
+        safe_rtsp = f"{protocol}://***@{parts[1]}"
+
     logger.info("=" * 50)
-    logger.info("VANTAGECAM SELF-HEALING WATCHDOG STARTED")
+    logger.info("VANTAGECAM SELF-HEALING WATCHDOG v2.8.1 STARTED")
     logger.info("=" * 50)
     logger.info(f"Status URL: {STATUS_URL}")
+    logger.info(f"RTSP Source: {safe_rtsp or 'Not configured'}")
     logger.info(f"Check interval: {CHECK_INTERVAL}s")
     logger.info(f"Initial delay: {INITIAL_DELAY}s")
     logger.info(f"Max backoff delay: {MAX_DELAY}s")
     logger.info(f"Stability threshold: {STABILITY_THRESHOLD}s")
+    logger.info(f"Verification timeout: {VERIFICATION_TIMEOUT}s")
+    logger.info(f"Startup delay: {STARTUP_DELAY}s")
+    logger.info(f"RTSP health check: {'Enabled' if RTSP_CHECK_ENABLED else 'Disabled'}")
+    logger.info(f"Verbose logging: {'Enabled' if VERBOSE_LOGGING else 'Disabled'}")
     logger.info("=" * 50)
-    
+
     # Validate Discord webhook first (so we can alert on credential errors)
     validate_discord_webhook()
-    
+
     # Validate YouTube credentials
     validate_youtube_credentials()
-    
+
+    # Check RTSP source at startup
+    if RTSP_CHECK_ENABLED and RTSP_SOURCE:
+        logger.info("Performing initial RTSP source health check...")
+        rtsp_status = check_rtsp_source_health()
+        logger.info(f"Initial RTSP status: {rtsp_status}")
+
     logger.info("=" * 50)
-    
+
     # Initial delay to let everything start up
-    logger.info("Waiting 60 seconds for initial stream startup...")
-    time.sleep(60)
-    
+    logger.info(f"Waiting {STARTUP_DELAY} seconds for initial stream startup...")
+    time.sleep(STARTUP_DELAY)
+
     consecutive_offline = 0
     last_public_check = datetime.now() - timedelta(hours=1)  # Force initial check
     alerted_offline = False  # Track if we've already sent offline alert
-    
+
     while True:
         try:
             status = check_stream_status()
-            
+
             if status == 'live':
                 # Stream is healthy
                 if consecutive_offline > 0:
                     logger.info(f"Stream recovered! Was offline for {consecutive_offline} checks")
                     if alerted_offline:
-                        alert_credential_error('stream_recovered', 
+                        alert_credential_error('stream_recovered',
                             f"Stream back online after {consecutive_offline} offline checks.\n"
                             f"Total restarts this session: {state.total_restarts}")
                         alerted_offline = False
                 consecutive_offline = 0
-                
+
                 # Check if we've been stable long enough to reset backoff
                 if state.last_healthy:
                     time_since_healthy = (datetime.now() - state.last_healthy).total_seconds()
@@ -768,43 +1058,43 @@ def run_watchdog():
                         pass  # Still in recovery validation
                 else:
                     state.reset_backoff()
-                
+
                 if state.attempt > 0:
                     state.reset_backoff()
                     logger.info("Backoff counter reset after stable connection")
-                
+
                 # Periodically check/set broadcast to PUBLIC (every 5 minutes while live)
                 if (datetime.now() - last_public_check).total_seconds() > 300:
                     ensure_broadcast_public()
                     last_public_check = datetime.now()
-            
+
             elif status == 'offline':
                 consecutive_offline += 1
                 logger.warning(f"Stream OFFLINE (consecutive: {consecutive_offline})")
-                
+
                 # Require 2 consecutive offline checks before restart (to avoid false positives)
                 if consecutive_offline >= 2:
                     logger.warning("Stream confirmed OFFLINE - initiating recovery")
-                    
+
                     # Send Discord alert (only once per offline event)
                     if not alerted_offline:
                         alert_credential_error('stream_offline',
                             f"Stream went offline. Attempting recovery...\n"
                             f"Attempt #{state.attempt + 1}")
                         alerted_offline = True
-                    
+
                     restart_stream()
-                    
+
                     # Verify recovery
                     if verify_stream_recovery():
                         consecutive_offline = 0
-                        
+
                         # Ensure broadcast is PUBLIC after recovery
                         logger.info("Checking broadcast visibility after recovery...")
                         time.sleep(10)  # Give YouTube a moment
                         ensure_broadcast_public()
                         last_public_check = datetime.now()
-                        
+
                         # Send recovery alert
                         alert_credential_error('stream_recovered',
                             f"Stream successfully recovered!\n"
@@ -812,17 +1102,17 @@ def run_watchdog():
                         alerted_offline = False
                     else:
                         logger.warning("Recovery verification failed - will retry on next loop")
-            
+
             else:  # status == 'error'
                 # Don't restart on errors - could be network issue with status endpoint
                 logger.warning("Status check returned error - will retry")
-            
+
             # Also check FFmpeg progress as secondary health indicator
             if status == 'live' and not check_ffmpeg_progress():
                 logger.warning("FFmpeg progress check failed despite 'live' status - monitoring...")
-            
+
             time.sleep(CHECK_INTERVAL)
-            
+
         except KeyboardInterrupt:
             logger.info("Watchdog stopped by user")
             break

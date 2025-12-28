@@ -1,10 +1,11 @@
 # Vantage Cam Live v2.8
 
+[![Docker Pulls](https://img.shields.io/docker/pulls/mcgeaverbeaver/vantagecamlive)](https://hub.docker.com/r/mcgeaverbeaver/vantagecamlive)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **OpenSource Automated Live Stream Broadcaster with Weather, Smart Alerts & Self-Healing**
 
-> 🎥 **See it in action:** [https://simcoelocal.com/](https://simcoelocal.com/)
+> 🎥 **See it in action:** [https://simcoelocal.ca/](https://simcoelocal.ca/)
 
 Transform a standard security camera feed into a professional broadcast without the hassle. Vantage Cam Live runs entirely in Docker and handles all the heavy lifting for you:
 
@@ -568,4 +569,4 @@ Contributions welcome! Please open an issue or submit a PR.
 ## 💬 Support
 
 - **Issues:** [GitHub Issues](https://github.com/McGeaverBeaver/VantageCamLive/issues)
-- **Demo:** [https://simcoelocal.com/](https://simcoelocal.com/)
+- **Demo:** [https://simcoelocal.ca/](https://simcoelocal.ca/)
