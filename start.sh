@@ -47,6 +47,9 @@ ADS_BASE="/config/ads"
 FLASH_ON_DURATION="${FLASH_ON_DURATION:-0.7}"   # Seconds "on" state shown
 FLASH_OFF_DURATION="${FLASH_OFF_DURATION:-0.3}" # Seconds "off" (dimmed) state shown
 
+# Watchdog Settings (Self-Healing)
+WATCHDOG_ENABLED="${WATCHDOG_ENABLED:-false}"
+
 # Direct-to-YouTube mode: Skip MediaMTX when only streaming to YouTube
 # This saves CPU by eliminating the internal RTSP encode/decode cycle
 if [ -n "$YOUTUBE_KEY" ] && [ "$ENABLE_LOCAL_STREAM" != "true" ]; then
@@ -70,6 +73,9 @@ AD_FINAL_TR="$WORKDIR/current_ad_tr.png"
 AD_TEMP_TR="$WORKDIR/temp_ad_tr.png"
 AD_PLAYLIST_TR="$WORKDIR/ad_playlist_tr.txt"
 
+# FFmpeg Progress file for watchdog monitoring
+FFMPEG_PROGRESS_FILE="$WORKDIR/ffmpeg_progress.txt"
+
 # Cache control
 LAST_AD_HASH_TL=""
 LAST_AD_HASH_TR=""
@@ -84,6 +90,8 @@ log() {
 cleanup() {
     log "Shutting down..."
     pkill -P $$ 2>/dev/null
+    # Also kill any watchdog process
+    pkill -f "watchdog.py" 2>/dev/null
     exit 0
 }
 trap cleanup SIGTERM SIGINT
@@ -373,7 +381,9 @@ if [ -n "$YOUTUBE_KEY" ] && [ "$DIRECT_YOUTUBE_MODE" != "true" ]; then
                     -rtsp_transport tcp -i "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live" \
                     -vf "$YT_FILTERS" -map 0:v:0 -map 0:a:0? \
                     $VIDEO_CODEC \
-                    -c:a aac -b:a 128k -ac 2 -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" &
+                    -c:a aac -b:a 128k -ac 2 \
+                    -progress "$FFMPEG_PROGRESS_FILE" \
+                    -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" &
             else
                 ffmpeg -hide_banner -loglevel error \
                     $HW_INIT \
@@ -381,7 +391,9 @@ if [ -n "$YOUTUBE_KEY" ] && [ "$DIRECT_YOUTUBE_MODE" != "true" ]; then
                     -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
                     -vf "$YT_FILTERS" -map 0:v:0 -map 1:a:0 \
                     $VIDEO_CODEC \
-                    -c:a aac -b:a 128k -shortest -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" &
+                    -c:a aac -b:a 128k -shortest \
+                    -progress "$FFMPEG_PROGRESS_FILE" \
+                    -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" &
             fi
             FFMPEG_PID=$!; echo $FFMPEG_PID > "/config/youtube_restreamer.pid"; wait $FFMPEG_PID; sleep 5
         done
@@ -391,6 +403,22 @@ fi
 # Initialize audio mode for direct mode
 if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
     echo "muted" > "/config/audio_mode"
+fi
+
+# ==============================================================================
+#  2.5 START WATCHDOG (Self-Healing)
+# ==============================================================================
+if [ "$WATCHDOG_ENABLED" = "true" ] && [ -n "$YOUTUBE_KEY" ]; then
+    log "--- Starting Self-Healing Watchdog ---"
+    python3 /watchdog.py &
+    WATCHDOG_PID=$!
+    log "Watchdog started (PID: $WATCHDOG_PID)"
+else
+    if [ "$WATCHDOG_ENABLED" = "true" ]; then
+        log "Watchdog enabled but no YOUTUBE_KEY set - skipping"
+    else
+        log "Watchdog disabled (WATCHDOG_ENABLED=false)"
+    fi
 fi
 
 # ==============================================================================
@@ -463,6 +491,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 -map "[vfinal]" -map 0:a? \
                 $VIDEO_CODEC \
                 -c:a aac -b:a 128k -ac 2 \
+                -progress "$FFMPEG_PROGRESS_FILE" \
                 -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" &
         else
             # Muted - use silent audio
@@ -473,11 +502,13 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 -map "[vfinal]" -map $((INPUT_COUNT)):a \
                 $VIDEO_CODEC \
                 -c:a aac -b:a 128k \
+                -progress "$FFMPEG_PROGRESS_FILE" \
                 -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" &
         fi
         
         FFMPEG_PID=$!
         echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
+        log "FFmpeg started (PID: $FFMPEG_PID)"
         
         # Wait for FFmpeg OR audio mode change
         while kill -0 $FFMPEG_PID 2>/dev/null; do
@@ -494,7 +525,8 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         # If FFmpeg died on its own, wait a bit before restart
         if ! kill -0 $FFMPEG_PID 2>/dev/null; then
             wait $FFMPEG_PID 2>/dev/null
-            log "FFmpeg exited, restarting in 5 seconds..."
+            EXIT_CODE=$?
+            log "FFmpeg exited with code $EXIT_CODE, restarting in 5 seconds..."
             sleep 5
         fi
     done
@@ -520,6 +552,7 @@ else
         -map "[vfinal]" -map 0:a? \
         $VIDEO_CODEC \
         -c:a copy \
+        -progress "$FFMPEG_PROGRESS_FILE" \
         -f rtsp -rtsp_transport tcp "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live"
         
         log "FFmpeg exited, restarting in 5 seconds..."

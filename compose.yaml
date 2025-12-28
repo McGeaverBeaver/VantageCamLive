@@ -65,6 +65,62 @@ services:
       # - YOUTUBE_WIDTH=2560
       # - YOUTUBE_HEIGHT=1440
       
+      # =======================================================================
+      # SELF-HEALING WATCHDOG SETTINGS (NEW in v2.8)
+      # =======================================================================
+      # Enable/disable the self-healing watchdog
+      - WATCHDOG_ENABLED=true
+      
+      # URL to your youtube_status.php endpoint
+      # The watchdog will poll this to check if the stream is live
+      - WATCHDOG_STATUS_URL=https://yourdomain.com/youtube_status.php
+      
+      # How often to check stream status (seconds)
+      # Default: 30 (every 30 seconds)
+      - WATCHDOG_CHECK_INTERVAL=30
+      
+      # Initial delay before restart after detecting offline (seconds)
+      # Uses exponential backoff: 10 -> 20 -> 40 -> 80 -> etc.
+      - WATCHDOG_INITIAL_DELAY=10
+      
+      # Maximum backoff delay (seconds) - caps at 15 minutes by default
+      - WATCHDOG_MAX_DELAY=900
+      
+      # How long stream must be stable before resetting backoff counter
+      - WATCHDOG_STABILITY_THRESHOLD=30
+      
+      # =======================================================================
+      # DISCORD NOTIFICATIONS (Optional)
+      # =======================================================================
+      # Get alerts when stream goes offline, recovers, or has credential errors
+      #
+      # To get a webhook URL:
+      # 1. Open Discord server settings -> Integrations -> Webhooks
+      # 2. Click "New Webhook", name it "VantageCam", choose a channel
+      # 3. Copy the webhook URL
+      #
+      # To get your User ID (for @mentions):
+      # 1. Enable Developer Mode in Discord settings -> Advanced
+      # 2. Right-click your username -> Copy User ID
+      #
+      - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxxxx/xxxxx
+      - DISCORD_USER_ID=123456789012345678
+      
+      # =======================================================================
+      # YOUTUBE API SETTINGS (for auto-setting stream to PUBLIC)
+      # =======================================================================
+      # These are OPTIONAL - if not set, watchdog still works but won't
+      # automatically change stream visibility after recovery
+      #
+      # Get these from Google Cloud Console:
+      # 1. Create OAuth 2.0 credentials
+      # 2. Enable YouTube Data API v3
+      # 3. Generate refresh token using OAuth playground
+      #
+      - YOUTUBE_CLIENT_ID=your_client_id_here
+      - YOUTUBE_CLIENT_SECRET=your_client_secret_here
+      - YOUTUBE_REFRESH_TOKEN=your_refresh_token_here
+      
     volumes:
       - /mnt/user/appdata/vantagecam:/config
     ports:
@@ -91,6 +147,9 @@ services:
   #     - WEATHER_LOCATION=My City
   #     - WEATHER_TIMEZONE=America/New_York
   #     - CAMERA_HEADING=E
+  #     # Self-healing
+  #     - WATCHDOG_ENABLED=true
+  #     - WATCHDOG_STATUS_URL=https://yourdomain.com/youtube_status.php
   #   volumes:
   #     - /mnt/user/appdata/vantagecam:/config
   #   ports:

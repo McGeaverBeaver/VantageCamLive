@@ -58,6 +58,11 @@ class AudioControlHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode())
     
     def do_GET(self):
+        # Health check should always work without auth
+        if self.path == '/health':
+            self.send_json({'status': 'ok'})
+            return
+
         if not self.check_auth():
             self.send_json({'error': 'Unauthorized'}, 401)
             return
@@ -68,8 +73,6 @@ class AudioControlHandler(BaseHTTPRequestHandler):
                 'audio': mode,
                 'muted': mode == 'muted'
             })
-        elif self.path == '/health':
-            self.send_json({'status': 'ok'})
         else:
             self.send_json({'error': 'Not found'}, 404)
     
@@ -98,9 +101,9 @@ if __name__ == '__main__':
             f.write('muted')
     
     server = HTTPServer(('0.0.0.0', 9998), AudioControlHandler)
-    print(f"[Audio API] Server started on port 9998")
+    print("[Audio API] Server started on port 9998")
     if API_KEY:
-        print(f"[Audio API] Secured with API Key protection")
+        print("[Audio API] Secured with API Key protection")
     else:
-        print(f"[Audio API] WARNING: No API Key set. API is open to everyone.")
+        print("[Audio API] WARNING: No API Key set. API is open to everyone.")
     server.serve_forever()

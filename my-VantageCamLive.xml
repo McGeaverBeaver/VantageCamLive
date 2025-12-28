@@ -1,76 +1,107 @@
 <?xml version="1.0"?>
 <Container version="2">
-  <n>VantageCamLive</n>
+  <Name>VantageCamLive</Name>
   <Repository>ghcr.io/mcgeaverbeaver/vantagecamlive:latest</Repository>
-  <Registry/>
+  <Registry>https://github.com/McGeaverBeaver/VantageCamLive/pkgs/container/vantagecamlive</Registry>
   <Network>bridge</Network>
-  <MyIP></MyIP>
+  <MyIP/>
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Support/>
-  <Project>https://github.com/mcgeaverbeaver/vantagecamlive</Project>
-  <Overview>A high-performance stream processor that overlays real-time weather and rotating advertisements. Supports hardware (Intel QuickSync) or software encoding. Supports any camera aspect ratio by automatically scaling to 1440p output.</Overview>
-  <Category>MediaServer:Video</Category>
-  <WebUI>http://[IP]:9998/health</WebUI>
+  <Support>https://github.com/McGeaverBeaver/VantageCamLive</Support>
+  <Project>https://github.com/McGeaverBeaver/VantageCamLive</Project>
+  <Overview>Automated 24/7 Live Stream Broadcaster with Weather Overlays, Smart Alerts, and Self-Healing.&#xD;
+&#xD;
+Transform a standard security camera feed into a professional broadcast. Features include:&#xD;
+- Real-time weather overlays (Environment Canada &amp; Open-Meteo)&#xD;
+- Smart alert system with flashing warnings&#xD;
+- Dynamic sponsor rotation (Day/Night modes)&#xD;
+- Hardware (Intel QuickSync) or Software encoding&#xD;
+- Self-healing watchdog with automatic recovery&#xD;
+- Auto-set stream to PUBLIC after recovery&#xD;
+&#xD;
+NEW in v2.8: Self-Healing Watchdog - automatically detects stream failures and restarts!</Overview>
+  <Category>MediaApp:Video MediaServer:Video</Category>
+  <WebUI/>
   <TemplateURL/>
-  <Icon>https://raw.githubusercontent.com/mcgeaverbeaver/vantagecamlive/main/icon.png</Icon>
-  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <Icon>https://raw.githubusercontent.com/McGeaverBeaver/VantageCamLive/main/icon.png</Icon>
+  <ExtraParams>--device=/dev/dri:/dev/dri</ExtraParams>
   <PostArgs/>
   <CPUset/>
+  <DateInstalled></DateInstalled>
   <DonateText/>
   <DonateLink/>
   <Requires/>
   
-  <!-- HARDWARE ACCELERATION -->
-  <Config Name="Hardware Acceleration" Target="HARDWARE_ACCEL" Default="true" Mode="" Description="Set to 'false' for software encoding (no Intel GPU required). Requires more CPU." Type="Variable" Display="always" Required="false" Mask="false">true</Config>
-  <Config Name="GPU Device" Target="/dev/dri" Default="" Mode="" Description="Intel GPU Passthrough (only needed if Hardware Acceleration is true)" Type="Device" Display="always" Required="false" Mask="false">/dev/dri</Config>
+  <!-- Config Volume -->
+  <Config Name="Config Path" Target="/config" Default="/mnt/user/appdata/vantagecam" Mode="rw" Description="Path for config files, ads, and weather icons" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/vantagecam</Config>
+  
+  <!-- Required Settings -->
+  <Config Name="RTSP Source" Target="RTSP_SOURCE" Default="rtsp://user:pass@192.168.1.50:554/stream" Mode="" Description="Your camera's RTSP stream URL" Type="Variable" Display="always" Required="true" Mask="false">rtsp://user:pass@192.168.1.50:554/stream</Config>
+  <Config Name="Admin User" Target="ADMIN_USER" Default="admin" Mode="" Description="Username for internal RTSP auth" Type="Variable" Display="always" Required="true" Mask="false">admin</Config>
+  <Config Name="Admin Pass" Target="ADMIN_PASS" Default="change_me_please" Mode="" Description="Password for internal RTSP auth" Type="Variable" Display="always" Required="true" Mask="true">change_me_please</Config>
+  
+  <!-- Hardware Acceleration -->
+  <Config Name="Hardware Accel" Target="HARDWARE_ACCEL" Default="true" Mode="" Description="Use Intel QuickSync (true) or Software encoding (false)" Type="Variable" Display="always" Required="false" Mask="false">true</Config>
   <Config Name="VAAPI Device" Target="VAAPI_DEVICE" Default="/dev/dri/renderD128" Mode="" Description="VAAPI render device path (advanced)" Type="Variable" Display="advanced" Required="false" Mask="false">/dev/dri/renderD128</Config>
   
-  <!-- SOFTWARE ENCODING (only used when HARDWARE_ACCEL=false) -->
-  <Config Name="Software Preset" Target="SOFTWARE_PRESET" Default="faster" Mode="" Description="x264 encoding speed (ultrafast/superfast/veryfast/faster/fast/medium). Only used when Hardware Acceleration is false." Type="Variable" Display="advanced" Required="false" Mask="false">faster</Config>
-  <Config Name="Software CRF" Target="SOFTWARE_CRF" Default="23" Mode="" Description="Quality level 0-51 (lower=better, 18-28 typical). Only used when Hardware Acceleration is false." Type="Variable" Display="advanced" Required="false" Mask="false">23</Config>
+  <!-- Software Encoding -->
+  <Config Name="Software Preset" Target="SOFTWARE_PRESET" Default="faster" Mode="" Description="x264 preset (ultrafast|superfast|veryfast|faster|fast|medium)" Type="Variable" Display="advanced" Required="false" Mask="false">faster</Config>
+  <Config Name="Software CRF" Target="SOFTWARE_CRF" Default="23" Mode="" Description="x264 quality (lower=better, 18-28 typical)" Type="Variable" Display="advanced" Required="false" Mask="false">23</Config>
   
-  <!-- STREAM SETTINGS -->
-  <Config Name="Enable Local Stream" Target="ENABLE_LOCAL_STREAM" Default="false" Mode="" Description="Set to 'true' to enable local RTSP viewing on port 8554" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
-  <Config Name="Local RTSP Port" Target="8554" Default="8554" Mode="tcp" Description="RTSP Video Output (Only works if Enable Local Stream is true)" Type="Port" Display="always" Required="false" Mask="false">8554</Config>
-  <Config Name="Audio API Port" Target="9998" Default="9998" Mode="tcp" Description="Port for Audio Control API (Mute/Unmute)" Type="Port" Display="always" Required="true" Mask="false">9998</Config>
-  <Config Name="Source RTSP URL" Target="RTSP_SOURCE" Default="" Mode="" Description="RTSP URL of your camera (e.g. rtsp://user:pass@192.168.1.50:554/stream)" Type="Variable" Display="always" Required="true" Mask="true">rtsp://user:password@192.168.1.50:554/stream</Config>
-  <Config Name="Output Username" Target="ADMIN_USER" Default="admin" Mode="" Description="Username for the new stream" Type="Variable" Display="always" Required="true" Mask="false">admin</Config>
-  <Config Name="Output Password" Target="ADMIN_PASS" Default="password" Mode="" Description="Password for the new stream" Type="Variable" Display="always" Required="true" Mask="true">your_secure_password</Config>
+  <!-- Stream Settings -->
+  <Config Name="Enable Local Stream" Target="ENABLE_LOCAL_STREAM" Default="false" Mode="" Description="Enable RTSP output for local preview (set false for direct YouTube mode)" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <Config Name="Scaling Mode" Target="SCALING_MODE" Default="fill" Mode="" Description="fill (zoom/crop to 16:9) or fit (letterbox)" Type="Variable" Display="always" Required="false" Mask="false">fill</Config>
   
-  <!-- VIDEO OUTPUT -->
-  <Config Name="Video Bitrate" Target="VIDEO_BITRATE" Default="14M" Mode="" Description="Quality of output stream (e.g. 4M to 14M)" Type="Variable" Display="always" Required="false" Mask="false">14M</Config>
-  <Config Name="Video FPS" Target="VIDEO_FPS" Default="30" Mode="" Description="Output framerate" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
-  <Config Name="Scaling Mode" Target="SCALING_MODE" Default="fill" Mode="" Description="'fill' = Zoom to remove black bars. 'fit' = Fit inside with letterboxing." Type="Variable" Display="always" Required="false" Mask="false">fill</Config>
+  <!-- Weather Settings -->
+  <Config Name="Weather Latitude" Target="WEATHER_LAT" Default="44.3894" Mode="" Description="Your location latitude" Type="Variable" Display="always" Required="true" Mask="false">44.3894</Config>
+  <Config Name="Weather Longitude" Target="WEATHER_LON" Default="-79.6903" Mode="" Description="Your location longitude" Type="Variable" Display="always" Required="true" Mask="false">-79.6903</Config>
+  <Config Name="Weather Location" Target="WEATHER_LOCATION" Default="My City" Mode="" Description="Location name shown on overlay" Type="Variable" Display="always" Required="true" Mask="false">My City</Config>
+  <Config Name="Weather Timezone" Target="WEATHER_TIMEZONE" Default="America/Toronto" Mode="" Description="Your timezone (e.g., America/New_York)" Type="Variable" Display="always" Required="true" Mask="false">America/Toronto</Config>
+  <Config Name="Camera Heading" Target="CAMERA_HEADING" Default="E" Mode="" Description="Direction camera faces (N, NE, E, SE, S, SW, W, NW or degrees)" Type="Variable" Display="always" Required="false" Mask="false">E</Config>
+  <Config Name="Alerts Update Interval" Target="ALERTS_UPDATE_INTERVAL" Default="900" Mode="" Description="Seconds between weather/alert updates (default 15 min)" Type="Variable" Display="advanced" Required="false" Mask="false">900</Config>
   
-  <!-- YOUTUBE -->
-  <Config Name="YouTube Stream Key" Target="YOUTUBE_KEY" Default="" Mode="" Description="Your YouTube Live Stream Key (leave blank to disable YouTube relay)" Type="Variable" Display="always" Required="false" Mask="true"></Config>
-  <Config Name="YouTube Stream URL" Target="YOUTUBE_URL" Default="rtmp://a.rtmp.youtube.com/live2" Mode="" Description="YouTube RTMP ingest server" Type="Variable" Display="always" Required="true" Mask="false">rtmp://a.rtmp.youtube.com/live2</Config>
-  <Config Name="YouTube Bitrate" Target="YOUTUBE_BITRATE" Default="4500k" Mode="" Description="Upload bitrate for YouTube (e.g. 2500k, 4500k, 8000k)" Type="Variable" Display="always" Required="false" Mask="false">4500k</Config>
-  <Config Name="YouTube Width" Target="YOUTUBE_WIDTH" Default="2560" Mode="" Description="Video width for YouTube (1920 for 1080p, 2560 for 1440p)" Type="Variable" Display="always" Required="false" Mask="false">2560</Config>
-  <Config Name="YouTube Height" Target="YOUTUBE_HEIGHT" Default="1440" Mode="" Description="Video height for YouTube (1080 for 1080p, 1440 for 1440p)" Type="Variable" Display="always" Required="false" Mask="false">1440</Config>
+  <!-- YouTube Settings -->
+  <Config Name="YouTube URL" Target="YOUTUBE_URL" Default="rtmp://a.rtmp.youtube.com/live2" Mode="" Description="YouTube RTMP ingest URL" Type="Variable" Display="always" Required="false" Mask="false">rtmp://a.rtmp.youtube.com/live2</Config>
+  <Config Name="YouTube Stream Key" Target="YOUTUBE_KEY" Default="" Mode="" Description="Your YouTube stream key (xxxx-xxxx-xxxx-xxxx)" Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="YouTube Bitrate" Target="YOUTUBE_BITRATE" Default="4500k" Mode="" Description="Upload bitrate to YouTube" Type="Variable" Display="advanced" Required="false" Mask="false">4500k</Config>
+  <Config Name="YouTube Width" Target="YOUTUBE_WIDTH" Default="2560" Mode="" Description="Output width (2560 for 1440p, 1920 for 1080p)" Type="Variable" Display="advanced" Required="false" Mask="false">2560</Config>
+  <Config Name="YouTube Height" Target="YOUTUBE_HEIGHT" Default="1440" Mode="" Description="Output height (1440 for 1440p, 1080 for 1080p)" Type="Variable" Display="advanced" Required="false" Mask="false">1440</Config>
   
-  <!-- STORAGE -->
-  <Config Name="Appdata Path" Target="/config" Default="/mnt/user/appdata/vantagecam" Mode="rw" Description="Folder for weather icons and ad images" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/vantagecam</Config>
+  <!-- ============================================================ -->
+  <!-- SELF-HEALING WATCHDOG SETTINGS (NEW in v2.8) -->
+  <!-- ============================================================ -->
+  <Config Name="Watchdog Enabled" Target="WATCHDOG_ENABLED" Default="false" Mode="" Description="Enable self-healing watchdog (auto-restart on stream failure)" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <Config Name="Watchdog Status URL" Target="WATCHDOG_STATUS_URL" Default="" Mode="" Description="URL to your youtube_status.php endpoint (e.g., https://yourdomain.com/youtube_status.php)" Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Watchdog Check Interval" Target="WATCHDOG_CHECK_INTERVAL" Default="30" Mode="" Description="Seconds between status checks" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
+  <Config Name="Watchdog Initial Delay" Target="WATCHDOG_INITIAL_DELAY" Default="10" Mode="" Description="Initial wait before restart (uses exponential backoff)" Type="Variable" Display="advanced" Required="false" Mask="false">10</Config>
+  <Config Name="Watchdog Max Delay" Target="WATCHDOG_MAX_DELAY" Default="900" Mode="" Description="Maximum backoff delay in seconds (default 15 min)" Type="Variable" Display="advanced" Required="false" Mask="false">900</Config>
+  <Config Name="Watchdog Stability Threshold" Target="WATCHDOG_STABILITY_THRESHOLD" Default="30" Mode="" Description="Seconds stream must be stable to reset backoff" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
   
-  <!-- WEATHER -->
-  <Config Name="Weather Latitude" Target="WEATHER_LAT" Default="" Mode="" Description="Your Latitude (Used for Weather &amp; Alerts)" Type="Variable" Display="always" Required="true" Mask="false">40.7128</Config>
-  <Config Name="Weather Longitude" Target="WEATHER_LON" Default="" Mode="" Description="Your Longitude (Used for Weather &amp; Alerts)" Type="Variable" Display="always" Required="true" Mask="false">-74.0060</Config>
-  <Config Name="Weather Timezone" Target="WEATHER_TIMEZONE" Default="America/New_York" Mode="" Description="Important for Day/Night logic and timestamps" Type="Variable" Display="always" Required="true" Mask="false">America/New_York</Config>
-  <Config Name="Weather Location Label" Target="WEATHER_LOCATION" Default="CITY NAME" Mode="" Description="The name shown on the overlay" Type="Variable" Display="always" Required="false" Mask="false">NEW YORK</Config>
-  <Config Name="Camera Heading" Target="CAMERA_HEADING" Default="N" Mode="" Description="Direction camera is facing (N, NE, E, SE, S, SW, W, NW). Used to rotate wind arrow." Type="Variable" Display="always" Required="false" Mask="false">N</Config>
-  <Config Name="Alerts/Weather Refresh Interval (Seconds)" Target="ALERTS_UPDATE_INTERVAL" Default="900" Mode="" Description="How often to fetch new data (e.g. 900 = 15 mins). Display is permanent while alert is active." Type="Variable" Display="always" Required="false" Mask="false">900</Config>
-  <Config Name="Weather Debug Mode" Target="WEATHER_DEBUG" Default="false" Mode="" Description="Set to 'true' to create detailed logs in /config/weather_debug.log" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
-
-  <!-- ADS -->
-  <Config Name="TL Ad Width" Target="SCALE_TL" Default="500" Mode="" Description="Size of Top-Left ads (pixels)" Type="Variable" Display="always" Required="false" Mask="false">500</Config>
-  <Config Name="TL Rotation Timer" Target="OVERLAYAD_ROTATE_TIMER" Default="30" Mode="" Description="Seconds per ad in top-left rotation" Type="Variable" Display="always" Required="false" Mask="false">30</Config>
-  <Config Name="TR Ad Width" Target="SCALE_TR" Default="400" Mode="" Description="Size of Top-Right popup (pixels)" Type="Variable" Display="always" Required="false" Mask="false">400</Config>
-  <Config Name="TR Show Seconds" Target="TR_SHOW_SECONDS" Default="20" Mode="" Description="Duration top-right ad is visible" Type="Variable" Display="always" Required="false" Mask="false">20</Config>
-  <Config Name="TR Hide Seconds" Target="TR_HIDE_SECONDS" Default="300" Mode="" Description="Duration top-right ad is hidden" Type="Variable" Display="always" Required="false" Mask="false">300</Config>
-  <Config Name="Day Start Hour" Target="DAY_START_HOUR" Default="6" Mode="" Description="Hour when DAY ad folder is used (0-23)" Type="Variable" Display="always" Required="false" Mask="false">6</Config>
-  <Config Name="Day End Hour" Target="DAY_END_HOUR" Default="18" Mode="" Description="Hour when NIGHT ad folder starts (0-23)" Type="Variable" Display="always" Required="false" Mask="false">18</Config>
+  <!-- Discord Notifications -->
+  <Config Name="Discord Webhook URL" Target="DISCORD_WEBHOOK_URL" Default="" Mode="" Description="Discord webhook URL for alerts (Server Settings -> Integrations -> Webhooks)" Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Discord User ID" Target="DISCORD_USER_ID" Default="" Mode="" Description="Your Discord user ID for @mentions (Enable Developer Mode, right-click username, Copy ID)" Type="Variable" Display="always" Required="false" Mask="false"></Config>
   
-  <!-- API -->
-  <Config Name="Audio API Key" Target="AUDIO_API_KEY" Default="" Mode="" Description="Optional password for Audio API (leave blank for open access)" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <!-- YouTube API (for auto-setting stream to PUBLIC) -->
+  <Config Name="YouTube Client ID" Target="YOUTUBE_CLIENT_ID" Default="" Mode="" Description="OAuth Client ID from Google Cloud Console (for auto-PUBLIC)" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="YouTube Client Secret" Target="YOUTUBE_CLIENT_SECRET" Default="" Mode="" Description="OAuth Client Secret from Google Cloud Console" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="YouTube Refresh Token" Target="YOUTUBE_REFRESH_TOKEN" Default="" Mode="" Description="OAuth Refresh Token (generate via OAuth Playground)" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  
+  <!-- Ad Settings -->
+  <Config Name="Top-Left Ad Size" Target="SCALE_TL" Default="500" Mode="" Description="Max width in pixels for top-left ads" Type="Variable" Display="advanced" Required="false" Mask="false">500</Config>
+  <Config Name="Top-Right Ad Size" Target="SCALE_TR" Default="400" Mode="" Description="Max width in pixels for top-right ads" Type="Variable" Display="advanced" Required="false" Mask="false">400</Config>
+  <Config Name="TL Rotation Timer" Target="OVERLAYAD_ROTATE_TIMER" Default="30" Mode="" Description="Seconds each top-left ad displays" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
+  <Config Name="TR Show Seconds" Target="TR_SHOW_SECONDS" Default="20" Mode="" Description="How long top-right ads are visible" Type="Variable" Display="advanced" Required="false" Mask="false">20</Config>
+  <Config Name="TR Hide Seconds" Target="TR_HIDE_SECONDS" Default="300" Mode="" Description="How long top-right ads are hidden" Type="Variable" Display="advanced" Required="false" Mask="false">300</Config>
+  <Config Name="Day Start Hour" Target="DAY_START_HOUR" Default="6" Mode="" Description="Hour (0-23) when Day mode begins" Type="Variable" Display="advanced" Required="false" Mask="false">6</Config>
+  <Config Name="Day End Hour" Target="DAY_END_HOUR" Default="20" Mode="" Description="Hour (0-23) when Night mode begins" Type="Variable" Display="advanced" Required="false" Mask="false">20</Config>
+  
+  <!-- Audio API -->
+  <Config Name="Audio API Key" Target="AUDIO_API_KEY" Default="" Mode="" Description="API key to secure the audio mute/unmute endpoint" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  
+  <!-- Debug -->
+  <Config Name="Weather Debug" Target="WEATHER_DEBUG" Default="false" Mode="" Description="Enable verbose weather logging" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  
+  <!-- Ports -->
+  <Config Name="RTSP Port" Target="8554" Default="8554" Mode="tcp" Description="RTSP output port (only if ENABLE_LOCAL_STREAM=true)" Type="Port" Display="always" Required="false" Mask="false">8554</Config>
+  <Config Name="Audio API Port" Target="9998" Default="9998" Mode="tcp" Description="Audio control API port" Type="Port" Display="always" Required="false" Mask="false">9998</Config>
 </Container>
