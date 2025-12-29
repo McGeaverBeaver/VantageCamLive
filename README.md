@@ -1,67 +1,94 @@
-# Vantage Cam Live v2.8.2
+# VantageCam Live v2.8.2
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**OpenSource Automated Live Stream Broadcaster with Weather, Smart Alerts & Self-Healing**
+**Open-Source Automated Live Stream Broadcaster with Weather, Smart Alerts & Self-Healing**
 
-> ?? **See it in action:** [https://simcoelocal.com/](https://simcoelocal.com/)
+> 📺 **See it in action:** [https://simcoelocal.com/](https://simcoelocal.com/)
 
-Transform a standard security camera feed into a professional broadcast without the hassle. Vantage Cam Live runs entirely in Docker and handles all the heavy lifting for you:
+Transform a standard security camera feed into a professional broadcast without the hassle. VantageCam Live runs entirely in Docker and handles all the heavy lifting for you:
 
-- ? **Automated Production** � Overlays real-time weather, government warnings, and rotating sponsor logos
-- ?? **Universal Fit** � Smart scaling fixes aspect ratios (no more black bars!)
-- ?? **Set & Forget** � Runs 24/7 with self-healing assets and automatic recovery
-- ?? **Self-Healing** � Detects failures and auto-recovers with Discord notifications
+- 🎬 **Automated Production** — Overlays real-time weather, government warnings, and rotating sponsor logos
+- 📐 **Universal Fit** — Smart scaling fixes aspect ratios (no more black bars!)
+- 🔄 **Set & Forget** — Runs 24/7 with self-healing assets and automatic recovery
+- 🛡️ **Self-Healing** — Detects failures and auto-recovers with Discord notifications
+- 📺 **Never Goes Offline** — "We'll Be Right Back" screen keeps YouTube alive during camera outages
 
 ---
 
-## ?? Table of Contents
+## 📋 Table of Contents
 
 - [Key Features](#-key-features)
+- [What's New in v2.8.2](#-whats-new-in-v282)
 - [Getting Started](#-getting-started)
 - [Docker Compose](#-docker-compose)
 - [Direct-to-YouTube Mode](#-direct-to-youtube-mode)
+- [Fallback Mode (BRB Screen)](#-fallback-mode-brb-screen)
 - [Self-Healing Watchdog](#-self-healing-watchdog)
 - [Discord Notifications](#-discord-notifications)
 - [YouTube API Setup Guide](#-youtube-api-setup-guide)
 - [Alert System](#-alert-system)
 - [Sponsor Management](#-sponsor-management)
-- [Advanced Configuration](#%EF%B8%8F-advanced-configuration)
-- [Audio Control API](#%EF%B8%8F-audio-control-api)
+- [Advanced Configuration](#️-advanced-configuration)
+- [Audio Control API](#️-audio-control-api)
 - [Troubleshooting](#-troubleshooting)
 - [Changelog](#-changelog)
 
 ---
 
-## ?? Key Features
+## ⭐ Key Features
 
 ### Video & Encoding
-- **Resolution Unlocked** � Stream in 1440p (2K) by default, or configure for 1080p/4K
-- **Smart Scaling** � `SCALING_MODE=fill` zooms and crops 4:3 cameras to fill 16:9 frames
-- **Flexible Encoding** � Hardware (Intel QuickSync/VAAPI) or software (x264) encoding
-- **Auto-Fallback** � Automatically switches to software mode if VAAPI fails
+- **Resolution Unlocked** — Stream in 1440p (2K) by default, or configure for 1080p/4K
+- **Smart Scaling** — `SCALING_MODE=fill` zooms and crops 4:3 cameras to fill 16:9 frames
+- **Flexible Encoding** — Hardware (Intel QuickSync/VAAPI) or software (x264) encoding
+- **Auto-Fallback** — Automatically switches to software mode if VAAPI fails
 
 ### Weather & Alerts
-- **Live Weather Overlay** � Real-time updates powered by Open-Meteo
-- **Smart Alert System** � Full Environment Canada + NWS alert hierarchy
-- **Flashing Warnings** � Extreme weather alerts flash red to grab attention
-- **Self-Healing Assets** � Weather icons auto-download/repair on boot
+- **Live Weather Overlay** — Real-time updates powered by Open-Meteo
+- **Smart Alert System** — Full Environment Canada + NWS alert hierarchy
+- **Flashing Warnings** — Extreme weather alerts flash red to grab attention
+- **Self-Healing Assets** — Weather icons auto-download/repair on boot
 
 ### Streaming
-- **Direct-to-YouTube Mode** � Single FFmpeg pipeline saves CPU/RAM when no local preview needed
-- **Dynamic Sponsors** � Drag-and-drop logos with automatic Day/Night rotation
-- **Audio Control API** � Remote mute/unmute via HTTP endpoints
+- **Direct-to-YouTube Mode** — Single FFmpeg pipeline saves CPU/RAM when no local preview needed
+- **Dynamic Sponsors** — Drag-and-drop logos with automatic Day/Night rotation
+- **Audio Control API** — Remote mute/unmute via HTTP endpoints
 
 ### Reliability *(v2.8+)*
-- **Self-Healing Watchdog** � Auto-detects failures and recovers streams
-- **RTSP Health Check** � Verifies camera is reachable before restart attempts
-- **Exponential Backoff** � Smart retry delays prevent hammering YouTube
-- **Auto-PUBLIC** � Restores stream visibility after recovery via YouTube API
-- **Discord Alerts** � Instant notifications for offline/recovery/errors
+- **Self-Healing Watchdog** — Auto-detects failures and recovers streams
+- **"We'll Be Right Back" Mode** — Keeps YouTube alive during camera outages
+- **Zombie Killer** — Detects frozen streams even when process is alive
+- **RTSP Health Check** — Verifies camera is reachable before restart attempts
+- **Exponential Backoff** — Smart retry delays prevent hammering YouTube
+- **Auto-PUBLIC** — Restores stream visibility after recovery via YouTube API
+- **Discord Alerts** — Instant notifications for offline/recovery/errors
 
 ---
 
-## ?? Getting Started
+## 🚀 What's New in v2.8.2
+
+### "Zombie Killer" Stream Monitor
+New heartbeat logic detects if the stream **freezes** (even if the FFmpeg process stays alive) by monitoring the progress file size. If no new data is written for 12 seconds, the stream is forcibly restarted.
+
+### Instant Camera Recovery
+The system now switches back to the main camera **the instant the network port opens**, rather than waiting for full video decoding. This reduces recovery time from ~10 seconds to under 3 seconds.
+
+### Unified Overlay System
+The "We'll Be Right Back" screen now displays your **full set of dynamic overlays** (Weather, Ads, Time) — making it look identical to your live stream. Viewers see a professional holding screen, not a blank image.
+
+### Reboot Loop Fix
+Solved the "Ping Failed" restart loop by ensuring the BRB FFmpeg process is **explicitly killed** the moment the main camera recovers. No more zombie processes fighting for the stream.
+
+### Startup Stability
+Added a **3-attempt retry mechanism** on boot. If the camera is slow to start (common after power outages), VantageCam will retry before falling back to the BRB screen.
+
+### PUID/PGID Support
+Full support for running as a non-root user. Set `PUID=99` and `PGID=100` on Unraid to have files owned by `nobody:users` instead of `root`.
+
+---
+
+## 🚀 Getting Started
 
 ### Prerequisites
 
@@ -75,28 +102,29 @@ Create a folder on your host for persistent data. The container auto-creates sub
 
 ```
 /config/
-+-- ads/
-�   +-- topleft/
-�   �   +-- DAY/         # Daytime sponsor logos
-�   �   +-- NIGHT/       # Nighttime sponsor logos
-�   +-- topright/
-�       +-- DAY/
-�       +-- NIGHT/
-+-- weather_icons/       # Auto-downloaded weather icons
-+-- watchdog.log         # Self-healing activity log
-+-- watchdog_state.json  # Persistent watchdog state
+├── ads/
+│   ├── topleft/
+│   │   ├── DAY/         # Daytime sponsor logos
+│   │   └── NIGHT/       # Nighttime sponsor logos
+│   └── topright/
+│       ├── DAY/
+│       └── NIGHT/
+├── weather_icons/       # Auto-downloaded weather icons
+├── watchdog.log         # Self-healing activity log
+├── watchdog_state.json  # Persistent watchdog state
+└── stream_mode          # Current mode: "normal" or "fallback"
 ```
 
 ### Quick Start (Unraid)
 
 1. Copy `my-VantageCamLive.xml` to `/boot/config/plugins/dockerMan/templates-user/`
-2. Navigate to **Docker** ? **Add Container**
+2. Navigate to **Docker** → **Add Container**
 3. Select **VantageCamLive** from the Template dropdown
 4. Configure required variables and click **Apply**
 
 ---
 
-## ?? Docker Compose
+## 🐳 Docker Compose
 
 ### Hardware Encoding (Intel QuickSync)
 
@@ -131,6 +159,9 @@ services:
       - YOUTUBE_WIDTH=2560
       - YOUTUBE_HEIGHT=1440
       - SCALING_MODE=fill
+      
+      # === FALLBACK MODE ===
+      - FALLBACK_ENABLED=true
       
       # === SELF-HEALING (Recommended) ===
       - WATCHDOG_ENABLED=true
@@ -178,18 +209,18 @@ services:
     restart: unless-stopped
 ```
 
-> ?? **Note:** Software encoding uses significantly more CPU. Expect 2-4 cores at moderate-high usage for 1440p.
+> ⚠️ **Note:** Software encoding uses significantly more CPU. Expect 2-4 cores at moderate-high usage for 1440p.
 
 ---
 
-## ?? Direct-to-YouTube Mode
+## 🎯 Direct-to-YouTube Mode
 
 When streaming only to YouTube (no local preview), the container uses an optimized single-pipeline:
 
 | Mode | Architecture | When Active |
 |:-----|:-------------|:------------|
-| **Direct** | Camera ? FFmpeg ? YouTube | `YOUTUBE_KEY` set + `ENABLE_LOCAL_STREAM=false` |
-| **MediaMTX** | Camera ? FFmpeg ? RTSP ? FFmpeg ? YouTube | `ENABLE_LOCAL_STREAM=true` |
+| **Direct** | Camera → FFmpeg → YouTube | `YOUTUBE_KEY` set + `ENABLE_LOCAL_STREAM=false` |
+| **MediaMTX** | Camera → FFmpeg → RTSP → FFmpeg → YouTube | `ENABLE_LOCAL_STREAM=true` |
 
 **Benefits of Direct mode:**
 - ~50MB less RAM
@@ -198,7 +229,63 @@ When streaming only to YouTube (no local preview), the container uses an optimiz
 
 ---
 
-## ?? Self-Healing Watchdog
+## 📺 Fallback Mode (BRB Screen)
+
+When enabled, VantageCam automatically shows a **"We'll Be Right Back"** screen when your camera's RTSP stream becomes unavailable. This keeps your YouTube stream alive instead of going offline.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  NORMAL MODE                                                     │
+│  Camera RTSP → FFmpeg → YouTube (viewers watch live feed)       │
+│                                                                  │
+│  ↓ RTSP health check fails (every 3 seconds)                    │
+│                                                                  │
+│  FALLBACK MODE (instant switch!)                                │
+│  "We'll Be Right Back" + Overlays → FFmpeg → YouTube            │
+│  (YouTube stream stays ALIVE - viewers never bounce!)           │
+│                                                                  │
+│  ↓ RTSP health check succeeds                                   │
+│                                                                  │
+│  NORMAL MODE (seamless switch back)                             │
+│  Camera RTSP → FFmpeg → YouTube                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Features
+
+| Feature | Description |
+|:--------|:------------|
+| **Unified Overlays** | BRB screen shows Weather, Ads, and Time overlays — looks like your live stream |
+| **Instant Recovery** | Switches back within 3 seconds of camera coming online |
+| **Zombie Detection** | Detects frozen streams even if FFmpeg process is alive |
+| **3-Retry Startup** | Won't immediately fall back if camera is slow to boot |
+
+### Configuration
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `FALLBACK_ENABLED` | `true` | Enable automatic fallback screen |
+
+### What You'll See in Logs
+
+```
+# When camera goes down:
+[Fallback] RTSP Ping Failed - Killing PID 1234...
+[Fallback] Starting 'We'll Be Right Back' stream (With Overlays)...
+
+# When camera recovers:
+[Fallback] RTSP Recovered! Killing BRB Stream (PID 5678) to switch...
+FFmpeg started (PID: 9012)
+
+# Zombie detection:
+[ERROR] FFmpeg FROZEN (Size static at 12345 for 12s). Killing...
+```
+
+---
+
+## 🛡️ Self-Healing Watchdog
 
 The watchdog monitors your stream and automatically recovers from failures.
 
@@ -207,8 +294,8 @@ The watchdog monitors your stream and automatically recovers from failures.
 1. **Waits** for startup delay (default 180s) to let YouTube recognize the stream
 2. **Detects** failure by polling your `youtube_status.php` endpoint
 3. **Checks** RTSP source health before attempting restart (prevents loops when camera is down)
-4. **Stops** FFmpeg gracefully (SIGINT ? SIGTERM ? SIGKILL)
-5. **Waits** with exponential backoff (10s ? 20s ? 40s... up to 15 min)
+4. **Stops** FFmpeg gracefully (SIGINT → SIGTERM → SIGKILL)
+5. **Waits** with exponential backoff (10s → 20s → 40s... up to 15 min)
 6. **Restarts** via the existing start.sh loop
 7. **Verifies** stream is stable for 30+ seconds
 8. **Sets** broadcast to PUBLIC (if YouTube API configured)
@@ -231,135 +318,63 @@ Deploy the included `youtube_status.php` to your web server. It should return:
 {"status": "offline"}
 ```
 
-### Recovery Flow
+### Watchdog vs Fallback Mode
 
-```
-Stream OFFLINE detected (2 consecutive checks)
-              �
-              ?
-+---------------------------------+
-�  Check RTSP source health       �
-�  (Skip restart if camera down)  �
-+---------------------------------+
-              �
-        RTSP Healthy?
-       +-------------+
-       No            Yes
-       �              �
-       ?              ?
-  Wait & retry   ?? Discord: "Stream Offline"
-                 Stop FFmpeg gracefully
-                 Wait with exponential backoff
-                      �
-                      ?
-              +---------------------------------+
-              �  FFmpeg auto-restarts           �
-              �  Wait 20s for stabilization     �
-              �  Verify LIVE for 30+ seconds    �
-              +---------------------------------+
-                      �
-               +-------------+
-               �             �
-            SUCCESS       FAILED
-               �             �
-               ?             ?
-         Reset backoff   Increase delay
-         Set ? PUBLIC    Retry
-         ?? "Recovered"
-```
+These two features work together but serve different purposes:
+
+| Feature | Purpose | Trigger |
+|:--------|:--------|:--------|
+| **Fallback Mode** | Keep YouTube alive during camera outages | RTSP port unreachable |
+| **Watchdog** | Recover from YouTube-side failures | YouTube API reports "offline" |
+
+The watchdog recognizes when Fallback Mode is active and won't try to restart during a camera outage.
 
 ---
 
-## ?? Discord Notifications
+## 🔔 Discord Notifications
 
-Get instant alerts on Discord for stream events and errors.
+Get instant alerts for:
+- 🔴 Stream went offline
+- 🟢 Stream recovered
+- 🟠 RTSP source unreachable
+- 🔴 YouTube API errors
 
 ### Setup
 
-1. **Create Webhook:**
-   - Open Discord ? Server Settings ? Integrations ? Webhooks
-   - Click **New Webhook**, name it, select channel
-   - Copy the webhook URL
+1. Create a Discord webhook in your server settings
+2. Add your User ID for @mentions (optional)
 
-2. **Get Your User ID (for @mentions):**
-   - Enable Developer Mode: Settings ? Advanced ? Developer Mode
-   - Right-click your username ? Copy User ID
-
-3. **Configure:**
-   ```yaml
-   environment:
-     - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxxxx/xxxxx
-     - DISCORD_USER_ID=123456789012345678
-   ```
-
-### Alert Types
-
-| Event | Color | Mentions You? |
-|:------|:------|:--------------|
-| Watchdog Started | ?? Green | No |
-| Stream Went Offline | ?? Orange | Yes |
-| Stream Recovered | ?? Green | Yes |
-| Broadcast Set to PUBLIC | ?? Green | No |
-| RTSP Source Down | ?? Orange | Yes |
-| Token Expired | ?? Red | Yes |
-| Invalid Credentials | ?? Red | Yes |
-| Scope Error | ?? Orange | Yes |
+```yaml
+environment:
+  - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxxxx/xxxxx
+  - DISCORD_USER_ID=123456789012345678
+```
 
 ---
 
-## ?? YouTube API Setup Guide
+## 🔑 YouTube API Setup Guide
 
-Enable auto-PUBLIC to automatically restore stream visibility after recovery.
+The YouTube API enables automatic stream visibility restoration after recovery.
 
-> **Note:** This is optional. The watchdog works without it�streams just won't auto-change to PUBLIC.
-
-### Step 1: Create Google Cloud Project
+### Step 1: Create OAuth Credentials
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project (e.g., "VantageCam")
-3. Select the project
+2. Create a new project or select existing
+3. Enable **YouTube Data API v3**
+4. Go to **Credentials** → **Create Credentials** → **OAuth 2.0 Client ID**
+5. Choose **Web application**
+6. Add `https://developers.google.com/oauthplayground` to redirect URIs
+7. Save your **Client ID** and **Client Secret**
 
-### Step 2: Enable YouTube Data API v3
+### Step 2: Get Refresh Token
 
-1. Go to **APIs & Services** ? **Library**
-2. Search for "YouTube Data API v3"
-3. Click **Enable**
+1. Go to [OAuth 2.0 Playground](https://developers.google.com/oauthplayground)
+2. Click gear icon → Enable "Use your own OAuth credentials"
+3. Enter your Client ID and Secret
+4. In Step 1, manually type: `https://www.googleapis.com/auth/youtube`
+5. Authorize and get your **Refresh Token**
 
-### Step 3: Configure OAuth Consent Screen
-
-1. Go to **APIs & Services** ? **OAuth consent screen**
-2. Select **External** ? **Create**
-3. Fill in app name, support email, developer email
-4. Add scope: `https://www.googleapis.com/auth/youtube`
-5. Add yourself as a test user
-6. Save
-
-### Step 4: Create OAuth Credentials
-
-1. Go to **APIs & Services** ? **Credentials**
-2. Click **+ Create Credentials** ? **OAuth client ID**
-3. Select **Web application**
-4. Add Authorized redirect URI:
-   ```
-   https://developers.google.com/oauthplayground
-   ```
-5. Click **Create**
-6. Copy your **Client ID** and **Client Secret**
-
-### Step 5: Generate Refresh Token
-
-1. Go to [OAuth Playground](https://developers.google.com/oauthplayground)
-2. Click gear icon ?? ? Check "Use your own OAuth credentials"
-3. Enter your Client ID and Client Secret
-4. In "Input your own scopes", type:
-   ```
-   https://www.googleapis.com/auth/youtube
-   ```
-5. Click **Authorize APIs** ? Sign in ? Grant access
-6. Click **Exchange authorization code for tokens**
-7. Copy the **Refresh Token**
-
-### Step 6: Configure Container
+### Step 3: Configure VantageCam
 
 ```yaml
 environment:
@@ -368,45 +383,71 @@ environment:
   - YOUTUBE_REFRESH_TOKEN=1//xxxxx
 ```
 
-### Token Expiration
+### Step 4: Deploy Status Endpoint
 
-**Testing mode:** Tokens expire after 7 days. You can either:
-- Regenerate the token weekly, OR
-- Publish your app (OAuth consent screen ? Publish App)
+Upload `youtube_status.php` to your web server and create a config file:
 
-> **Note:** Publishing your app does NOT give others access to your YouTube account. It only means others could use your app to authorize access to their own accounts. Your refresh token only works for your channel.
-
----
-
-## ?? Alert System
-
-Supports Environment Canada and US National Weather Service alerts:
-
-| Alert Type | Color | Display |
-|:-----------|:------|:--------|
-| **Warning** (Extreme) | ?? Red + Flashing | Tornado, Severe Thunderstorm, Hurricane |
-| **Warning** (Moderate) | ?? Orange | Freezing Rain, Wind, Rainfall, Snowfall |
-| **Warning** (Minor) | ?? Yellow | Other warnings |
-| **Watch** | Colored + Dashed | Same colors, dashed border |
-| **Statement** | ? Grey | Compact half-height display |
+```php
+// /etc/vantagecam/youtube_config.php
+define('YOUTUBE_CLIENT_ID', 'your_client_id');
+define('YOUTUBE_CLIENT_SECRET', 'your_client_secret');
+define('YOUTUBE_REFRESH_TOKEN', 'your_refresh_token');
+```
 
 ---
 
-## ?? Sponsor Management
+## 🚨 Alert System
 
-Dynamic "watch folder" system for sponsor logos:
+VantageCam supports government weather alerts from:
+- **Environment Canada** (CAP alerts)
+- **US National Weather Service** (via Open-Meteo)
 
-- **Auto-Resizing** � Any image size automatically scaled to fit
-- **Top-Left** � Continuous rotation loop (primary sponsors)
-- **Top-Right** � Popup style, 20s visible / 5min hidden (CTAs)
-- **Day/Night** � Automatic switching based on configured hours
-- **Formats:** PNG, JPG, JPEG
+### Alert Priority
+
+| Priority | Examples | Display |
+|:---------|:---------|:--------|
+| 🔴 Extreme | Tornado Warning, Hurricane | Flashing red banner |
+| 🟠 Severe | Thunderstorm Warning, Blizzard | Solid orange banner |
+| 🟡 Moderate | Winter Storm Watch, Heat Advisory | Yellow banner |
+| ⚪ Minor | Frost Advisory, Air Quality | Gray banner |
+
+### Compact Statements
+
+Long-duration events (Heat Waves, Air Quality Statements) display in a compact format to save screen space.
 
 ---
 
-## ??? Advanced Configuration
+## 📢 Sponsor Management
 
-### User Permissions (PUID/PGID)
+### Folder Structure
+
+```
+/config/ads/
+├── topleft/
+│   ├── DAY/      # 6 AM - 8 PM
+│   └── NIGHT/    # 8 PM - 6 AM
+└── topright/
+    ├── DAY/
+    └── NIGHT/
+```
+
+### Supported Formats
+- PNG (recommended - supports transparency)
+- JPEG
+- WebP
+
+### Behavior
+
+| Position | Rotation | Notes |
+|:---------|:---------|:------|
+| Top-Left | Every 30s (configurable) | Always visible |
+| Top-Right | Show 20s, hide 5 min | Periodic display |
+
+---
+
+## ⚙️ Advanced Configuration
+
+### User Permissions
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
@@ -415,19 +456,14 @@ Dynamic "watch folder" system for sponsor logos:
 
 > **Unraid Users:** Set `PUID=99` and `PGID=100` to match the "nobody:users" standard.
 
-### Hardware & Encoding
-
-| Variable | Default | Description |
-|:---------|:--------|:------------|
-| `HARDWARE_ACCEL` | `true` | `false` for software encoding |
-| `VAAPI_DEVICE` | `/dev/dri/renderD128` | VAAPI device path |
-| `SOFTWARE_PRESET` | `faster` | x264 preset (ultrafast?medium) |
-| `SOFTWARE_CRF` | `23` | Quality (lower=better, 18-28) |
-
 ### Video Output
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
+| `HARDWARE_ACCEL` | `true` | Use VAAPI encoding |
+| `VAAPI_DEVICE` | `/dev/dri/renderD128` | GPU device |
+| `SOFTWARE_PRESET` | `faster` | x264 preset |
+| `SOFTWARE_CRF` | `23` | Quality (lower=better) |
 | `SCALING_MODE` | `fill` | `fill` or `fit` |
 | `VIDEO_BITRATE` | `14M` | Output bitrate |
 | `VIDEO_FPS` | `30` | Framerate |
@@ -441,6 +477,12 @@ Dynamic "watch folder" system for sponsor logos:
 | `YOUTUBE_WIDTH` | `2560` | Output width |
 | `YOUTUBE_HEIGHT` | `1440` | Output height |
 | `YOUTUBE_BITRATE` | `4500k` | Upload bitrate |
+
+### Fallback Mode
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `FALLBACK_ENABLED` | `true` | Enable BRB screen when camera is unreachable |
 
 ### Self-Healing Watchdog
 
@@ -483,28 +525,6 @@ Dynamic "watch folder" system for sponsor logos:
 | `CAMERA_HEADING` | `N` | Wind arrow direction |
 | `ALERTS_UPDATE_INTERVAL` | `900` | Update interval (seconds) |
 
-### Debug & Monitoring
-
-| Variable | Default | Description |
-|:---------|:--------|:------------|
-| `WEATHER_DEBUG` | `false` | Verbose weather logging |
-| `FFMPEG_PROGRESS_LOG` | `false` | Enable FFmpeg frame logging. **Warning:** File grows ~10MB/day. Only needed for local frame-stall detection. YouTube status API is the primary health check. |
-
-### Fallback Mode (NEW in v2.8.2)
-
-When enabled, VantageCam automatically shows a **"We'll Be Right Back"** screen when your camera's RTSP stream becomes unavailable. This keeps your YouTube stream alive instead of going offline, so viewers aren't bounced to other videos.
-
-| Variable | Default | Description |
-|:---------|:--------|:------------|
-| `FALLBACK_ENABLED` | `true` | Enable automatic fallback screen when camera is unreachable |
-
-**How it works:**
-1. VantageCam monitors your camera's RTSP connection every 3 seconds
-2. If the camera becomes unreachable, it instantly switches to a fallback image
-3. The YouTube stream stays LIVE with the "We'll Be Right Back" screen
-4. When the camera recovers, it automatically switches back to the live feed
-5. Viewers never leave your stream!
-
 ### Sponsor Overlays
 
 | Variable | Default | Description |
@@ -519,7 +539,7 @@ When enabled, VantageCam automatically shows a **"We'll Be Right Back"** screen 
 
 ---
 
-## ??? Audio Control API
+## 🎛️ Audio Control API
 
 Control stream audio via HTTP:
 
@@ -535,13 +555,26 @@ Control stream audio via HTTP:
 
 ---
 
-## ?? Troubleshooting
+## 🔧 Troubleshooting
 
 ### File Permissions (Unraid)
 
 **Files owned by root instead of nobody:users**
 - Set `PUID=99` and `PGID=100` in your container config
 - Run once to fix existing files: `chown -R nobody:users /mnt/user/appdata/vantagecam`
+
+### Fallback Mode Issues
+
+**Stream goes to BRB immediately on boot**
+- This can happen if your camera takes a long time to initialize
+- The 3-retry mechanism should handle this, but check camera responsiveness
+
+**"Ping Failed" loop during camera reboot**
+- Fixed in v2.8.2 — the BRB stream is now explicitly killed when camera recovers
+
+**BRB screen doesn't show overlays**
+- Verify overlay files exist in `/config/`
+- Check logs for overlay loading errors
 
 ### Watchdog Issues
 
@@ -581,28 +614,33 @@ Control stream audio via HTTP:
 **"deprecated pixel format" warnings**
 - Harmless FFmpeg warning, ignore
 
+**FFmpeg FROZEN detected**
+- Zombie Killer detected a stalled stream and is recovering
+- Check camera connection stability
+
 **Container shows "unhealthy"**
 - Check if Audio API is responding: `curl http://IP:9998/health`
 - Check FFmpeg is running: `docker exec vantagecam ps aux | grep ffmpeg`
 
 ---
 
-## ?? Changelog
+## 📜 Changelog
 
-### v2.8.2 - PUID/PGID Support & Fallback Mode
-- **New:** PUID/PGID support for proper file ownership (Unraid compatibility)
-- **New:** **Fallback Mode** - Shows "We'll Be Right Back" screen when camera is unreachable
-  - Keeps YouTube stream alive instead of going offline
-  - Viewers stay on your stream instead of being bounced to other videos
-  - Automatically switches back when camera recovers
-  - Checks RTSP health every 3 seconds for fast detection
-- **New:** `.dockerignore` for cleaner/faster builds
-- **New:** Docker image labels (version, maintainer, source)
-- **Fixed:** Processes now actually run as target user (not just file ownership)
-- **Changed:** FFmpeg progress logging now disabled by default (`FFMPEG_PROGRESS_LOG=false`)
-  - YouTube status API is the primary and more reliable health check
-  - Enable if you need local frame-stall detection (grows ~10MB/day)
-- **Improved:** Documentation for file permissions
+### v2.8.2 - Fallback Mode & Zombie Killer
+
+**Major Features:**
+- **"Zombie Killer" Monitor** — Detects frozen streams (even when process is alive) by monitoring progress file size. Auto-restarts within 12 seconds.
+- **Instant Camera Recovery** — Switches back to main camera the instant RTSP port opens, not waiting for full video decode.
+- **Unified Overlay System** — BRB screen displays full Weather, Ads, and Time overlays (looks identical to live stream).
+- **Reboot Loop Fix** — Solved "Ping Failed" loop by explicitly killing BRB process when camera recovers.
+- **Startup Stability** — 3-attempt retry mechanism prevents falling back to BRB if camera is slow to boot.
+- **PUID/PGID Support** — Run as non-root user for proper file ownership (Unraid compatibility).
+
+**Improvements:**
+- Cleaner code architecture with separated RTSP and overlay inputs
+- Better logging with heartbeat status every 10 seconds
+- Docker image labels for version tracking
+- `.dockerignore` for faster builds
 
 ### v2.8.1 - RTSP Health Check & Smart Startup
 - **New:** RTSP source health check before recovery attempts
@@ -619,7 +657,7 @@ Control stream audio via HTTP:
 - **New:** FFmpeg progress monitoring for stall detection
 - **New:** Exponential backoff with jitter
 - **New:** State persistence across restarts
-- **Improved:** Graceful FFmpeg shutdown (SIGINT ? SIGTERM ? SIGKILL)
+- **Improved:** Graceful FFmpeg shutdown (SIGINT → SIGTERM → SIGKILL)
 - **Fixed:** Health endpoint works with API key enabled
 
 ### v2.7 - Direct-to-YouTube Mode
@@ -642,19 +680,19 @@ Control stream audio via HTTP:
 
 ---
 
-## ?? License
+## 📄 License
 
 MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-## ?? Contributing
+## 🤝 Contributing
 
 Contributions welcome! Please open an issue or submit a PR.
 
 ---
 
-## ?? Support
+## 💬 Support
 
 - **Issues:** [GitHub Issues](https://github.com/McGeaverBeaver/VantageCamLive/issues)
 - **Demo:** [https://simcoelocal.com/](https://simcoelocal.com/)
