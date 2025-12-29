@@ -66,6 +66,7 @@ PID_FILE = "/config/youtube_restreamer.pid"
 PROGRESS_FILE = "/config/ffmpeg_progress.txt"
 WATCHDOG_STATE_FILE = "/config/watchdog_state.json"
 LOG_FILE = "/config/watchdog.log"
+STREAM_MODE_FILE = "/config/stream_mode"  # Tracks "normal" or "fallback"
 
 # ==============================================================================
 #  LOGGING SETUP
@@ -167,6 +168,21 @@ def check_rtsp_source_health():
         return 'unknown'
 
 
+def is_fallback_mode():
+    """
+    Check if VantageCam is currently in fallback mode (showing "We'll Be Right Back").
+    In fallback mode, the watchdog should NOT try to restart FFmpeg since start.sh is handling it.
+    """
+    try:
+        if os.path.exists(STREAM_MODE_FILE):
+            with open(STREAM_MODE_FILE, 'r') as f:
+                mode = f.read().strip()
+                return mode == "fallback"
+    except:
+        pass
+    return False
+
+
 def check_rtsp_with_ffprobe():
     """
     More thorough RTSP check using ffprobe (if available).
@@ -263,7 +279,7 @@ def alert_credential_error(error_type, details):
     """Send Discord alert for credential/API errors"""
     messages = {
         'token_expired': {
-            'title': '🔴 YouTube API Token Expired',
+            'title': '[ERROR] YouTube API Token Expired',
             'message': (
                 '**Your YouTube refresh token has expired!**\n\n'
                 'The watchdog cannot set streams to PUBLIC until you regenerate it.\n\n'
@@ -277,7 +293,7 @@ def alert_credential_error(error_type, details):
             )
         },
         'invalid_credentials': {
-            'title': '🔴 YouTube API Credentials Invalid',
+            'title': '[ERROR] YouTube API Credentials Invalid',
             'message': (
                 '**Your YouTube API credentials are invalid!**\n\n'
                 'Check that `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET` are correct.\n\n'
@@ -285,7 +301,7 @@ def alert_credential_error(error_type, details):
             )
         },
         'insufficient_scope': {
-            'title': '🟠 YouTube API Scope Error',
+            'title': '[WARNING] YouTube API Scope Error',
             'message': (
                 '**Your refresh token has insufficient permissions!**\n\n'
                 'The token was generated with read-only scope.\n\n'
@@ -297,11 +313,11 @@ def alert_credential_error(error_type, details):
             )
         },
         'api_error': {
-            'title': '🔴 YouTube API Error',
+            'title': '[ERROR] YouTube API Error',
             'message': f'**An error occurred with the YouTube API:**\n\n```{details}```'
         },
         'stream_offline': {
-            'title': '🟠 Stream Went Offline',
+            'title': '[WARNING] Stream Went Offline',
             'message': (
                 '**Your YouTube stream went offline!**\n\n'
                 'The watchdog is attempting to recover the stream.\n\n'
@@ -309,14 +325,14 @@ def alert_credential_error(error_type, details):
             )
         },
         'stream_recovered': {
-            'title': '🟢 Stream Recovered',
+            'title': '[OK] Stream Recovered',
             'message': (
                 '**Your YouTube stream is back online!**\n\n'
                 f'```{details}```'
             )
         },
         'rtsp_down': {
-            'title': '🔴 RTSP Source Unreachable',
+            'title': '[ERROR] RTSP Source Unreachable',
             'message': (
                 '**The camera RTSP source is unreachable!**\n\n'
                 'The watchdog will wait for the source to come back online before attempting recovery.\n\n'
@@ -324,7 +340,7 @@ def alert_credential_error(error_type, details):
             )
         },
         'rtsp_recovered': {
-            'title': '🟢 RTSP Source Recovered',
+            'title': '[OK] RTSP Source Recovered',
             'message': (
                 '**The camera RTSP source is back online!**\n\n'
                 'Proceeding with stream recovery.\n\n'
@@ -334,7 +350,7 @@ def alert_credential_error(error_type, details):
     }
 
     msg = messages.get(error_type, {
-        'title': '⚠️ VantageCam Alert',
+        'title': '[ALERT] VantageCam Alert',
         'message': details
     })
 
@@ -564,7 +580,7 @@ def ensure_broadcast_public():
 
     if success:
         send_discord_alert(
-            "🟢 Broadcast Set to PUBLIC",
+            "[OK] Broadcast Set to PUBLIC",
             f"**{broadcast['title']}**\n\nVisibility changed from `{broadcast['privacy']}` to `public`.",
             color=65280,  # Green
             mention_user=False
@@ -635,12 +651,12 @@ def check_stream_status():
 def check_ffmpeg_progress():
     """
     Check if FFmpeg is actually producing output by monitoring the progress file.
-    Returns True if FFmpeg appears healthy, False otherwise.
+    Returns True if FFmpeg appears healthy, False if stalled, None if not available.
     """
     try:
         if not os.path.exists(PROGRESS_FILE):
-            logger.debug("FFmpeg progress file does not exist")
-            return False
+            # Progress logging may be disabled - this is expected
+            return None
 
         # Check file age
         file_age = time.time() - os.path.getmtime(PROGRESS_FILE)
@@ -770,7 +786,7 @@ def get_backoff_delay():
     """
     base_delay = INITIAL_DELAY * (2 ** state.attempt)
 
-    # Add jitter (±30%)
+    # Add jitter (+/-30%)
     jitter = base_delay * 0.3
     delay = base_delay + random.uniform(-jitter, jitter)
 
@@ -959,14 +975,14 @@ def validate_discord_webhook():
     logger.info("Discord Alerts: Testing webhook...")
 
     success = send_discord_alert(
-        "🟢 VantageCam Watchdog Started",
+        "VantageCam Watchdog Started",
         "The self-healing watchdog is now monitoring your stream.\n\n"
         f"**Configuration:**\n"
-        f"• Startup delay: {STARTUP_DELAY}s\n"
-        f"• Check interval: {CHECK_INTERVAL}s\n"
-        f"• Verification timeout: {VERIFICATION_TIMEOUT}s\n"
-        f"• RTSP health check: {'Enabled' if RTSP_CHECK_ENABLED else 'Disabled'}\n"
-        f"• Verbose logging: {'Enabled' if VERBOSE_LOGGING else 'Disabled'}",
+        f"- Startup delay: {STARTUP_DELAY}s\n"
+        f"- Check interval: {CHECK_INTERVAL}s\n"
+        f"- Verification timeout: {VERIFICATION_TIMEOUT}s\n"
+        f"- RTSP health check: {'Enabled' if RTSP_CHECK_ENABLED else 'Disabled'}\n"
+        f"- Verbose logging: {'Enabled' if VERBOSE_LOGGING else 'Disabled'}",
         color=65280,  # Green
         mention_user=False
     )
@@ -1074,6 +1090,12 @@ def run_watchdog():
 
                 # Require 2 consecutive offline checks before restart (to avoid false positives)
                 if consecutive_offline >= 2:
+                    # Check if we're in fallback mode - if so, start.sh is handling recovery
+                    if is_fallback_mode():
+                        logger.info("In fallback mode - start.sh is handling camera recovery, skipping watchdog restart")
+                        consecutive_offline = 0  # Reset counter since this is expected
+                        continue
+                    
                     logger.warning("Stream confirmed OFFLINE - initiating recovery")
 
                     # Send Discord alert (only once per offline event)
@@ -1108,7 +1130,8 @@ def run_watchdog():
                 logger.warning("Status check returned error - will retry")
 
             # Also check FFmpeg progress as secondary health indicator
-            if status == 'live' and not check_ffmpeg_progress():
+            progress_status = check_ffmpeg_progress()
+            if status == 'live' and progress_status is False:
                 logger.warning("FFmpeg progress check failed despite 'live' status - monitoring...")
 
             time.sleep(CHECK_INTERVAL)

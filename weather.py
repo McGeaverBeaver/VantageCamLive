@@ -601,6 +601,79 @@ def generate_blank(output_path, width, height):
         return True
     except: return False
 
+def generate_fallback(output_path, width=2560, height=1440, message="We'll Be Right Back"):
+    """
+    Generate a professional "We'll be right back" screen.
+    Used when RTSP source is unavailable to keep YouTube stream alive.
+    """
+    try:
+        width, height = int(width), int(height)
+        
+        # Dark gradient background
+        img = Image.new('RGB', (width, height), (20, 20, 30))
+        draw = ImageDraw.Draw(img)
+        
+        # Add subtle gradient effect (darker at edges)
+        for i in range(height // 2):
+            alpha = int(30 * (1 - i / (height // 2)))
+            draw.rectangle([0, i, width, i+1], fill=(20 - alpha//2, 20 - alpha//2, 30 - alpha//2))
+            draw.rectangle([0, height-i-1, width, height-i], fill=(20 - alpha//2, 20 - alpha//2, 30 - alpha//2))
+        
+        # Main message
+        try:
+            font_large = ImageFont.truetype(FONT_PATH, 120)
+            font_small = ImageFont.truetype(FONT_PATH, 48)
+        except:
+            font_large = ImageFont.load_default()
+            font_small = ImageFont.load_default()
+        
+        # Center the main message
+        bbox = draw.textbbox((0, 0), message, font=font_large)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        x = (width - text_w) // 2
+        y = (height - text_h) // 2 - 50
+        
+        # Draw shadow
+        draw.text((x + 4, y + 4), message, font=font_large, fill=(0, 0, 0))
+        # Draw main text
+        draw.text((x, y), message, font=font_large, fill=(255, 255, 255))
+        
+        # Subtitle
+        subtitle = "Experiencing technical difficulties - stream will resume shortly"
+        bbox_sub = draw.textbbox((0, 0), subtitle, font=font_small)
+        sub_w = bbox_sub[2] - bbox_sub[0]
+        x_sub = (width - sub_w) // 2
+        y_sub = y + text_h + 60
+        
+        draw.text((x_sub + 2, y_sub + 2), subtitle, font=font_small, fill=(0, 0, 0))
+        draw.text((x_sub, y_sub), subtitle, font=font_small, fill=(180, 180, 180))
+        
+        # Add location name if available
+        if LOCATION_NAME:
+            bbox_loc = draw.textbbox((0, 0), LOCATION_NAME, font=font_small)
+            loc_w = bbox_loc[2] - bbox_loc[0]
+            x_loc = (width - loc_w) // 2
+            y_loc = y - 100
+            draw.text((x_loc, y_loc), LOCATION_NAME, font=font_small, fill=(100, 150, 255))
+        
+        # Add timestamp
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        bbox_time = draw.textbbox((0, 0), timestamp, font=font_small)
+        time_w = bbox_time[2] - bbox_time[0]
+        draw.text((width - time_w - 40, height - 80), timestamp, font=font_small, fill=(100, 100, 100))
+        
+        img.save(output_path, "PNG", optimize=True)
+        return True
+    except Exception as e:
+        log(f"[Fallback] Error generating fallback image: {e}")
+        # Create a simple black image as ultimate fallback
+        try:
+            Image.new('RGB', (int(width), int(height)), (20, 20, 30)).save(output_path, "PNG")
+            return True
+        except:
+            return False
+
 def process_ad(input_path, output_path, target_w, target_h):
     try:
         with Image.open(input_path) as im:
@@ -632,3 +705,10 @@ if __name__ == "__main__":
         generate_blank(output, sys.argv[3], sys.argv[4])
     elif mode == "ad":
         process_ad(sys.argv[3], output, sys.argv[4], sys.argv[5])
+    elif mode == "fallback":
+        # Generate "We'll be right back" screen
+        # Usage: python weather.py fallback /path/to/output.png [width] [height] [message]
+        width = int(sys.argv[3]) if len(sys.argv) > 3 else 2560
+        height = int(sys.argv[4]) if len(sys.argv) > 4 else 1440
+        message = sys.argv[5] if len(sys.argv) > 5 else "We'll Be Right Back"
+        generate_fallback(output, width, height, message)

@@ -20,7 +20,7 @@
     - RTSP source health checks before recovery&#xD;
     - Auto-set stream to PUBLIC after recovery&#xD;
     &#xD;
-    v2.8.1: RTSP health checks, smart startup delay, improved recovery!</Overview>
+    v2.8.2: Added PUID/PGID support for proper file ownership!</Overview>
   <Category>MediaApp:Video MediaServer:Video</Category>
   <WebUI/>
   <TemplateURL/>
@@ -35,6 +35,10 @@
 
   <!-- Config Volume -->
   <Config Name="Config Path" Target="/config" Default="/mnt/user/appdata/vantagecam" Mode="rw" Description="Path for config files, ads, and weather icons" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/vantagecam</Config>
+
+  <!-- User/Group Permissions -->
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID for file ownership (99 = nobody on Unraid)" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID for file ownership (100 = users on Unraid)" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
 
   <!-- Required Settings -->
   <Config Name="RTSP Source" Target="RTSP_SOURCE" Default="rtsp://user:pass@192.168.1.50:554/stream" Mode="" Description="Your camera's RTSP stream URL" Type="Variable" Display="always" Required="true" Mask="false">rtsp://user:pass@192.168.1.50:554/stream</Config>
@@ -69,7 +73,7 @@
   <Config Name="YouTube Height" Target="YOUTUBE_HEIGHT" Default="1440" Mode="" Description="Output height (1440 for 1440p, 1080 for 1080p)" Type="Variable" Display="advanced" Required="false" Mask="false">1440</Config>
 
   <!-- ============================================================ -->
-  <!-- SELF-HEALING WATCHDOG SETTINGS (v2.8.1) -->
+  <!-- SELF-HEALING WATCHDOG SETTINGS -->
   <!-- ============================================================ -->
   <Config Name="Watchdog Enabled" Target="WATCHDOG_ENABLED" Default="false" Mode="" Description="Enable self-healing watchdog (auto-restart on stream failure)" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
   <Config Name="Watchdog Status URL" Target="WATCHDOG_STATUS_URL" Default="" Mode="" Description="URL to your youtube_status.php endpoint (e.g., https://yourdomain.com/youtube_status.php)" Type="Variable" Display="always" Required="false" Mask="false"></Config>
@@ -105,6 +109,10 @@
 
   <!-- Debug -->
   <Config Name="Weather Debug" Target="WEATHER_DEBUG" Default="false" Mode="" Description="Enable verbose weather logging" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="FFmpeg Progress Log" Target="FFMPEG_PROGRESS_LOG" Default="false" Mode="" Description="Enable FFmpeg frame logging for stall detection. WARNING: File grows ~10MB/day. YouTube status API is the primary health check." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  
+  <!-- Fallback Mode -->
+  <Config Name="Fallback Mode" Target="FALLBACK_ENABLED" Default="true" Mode="" Description="Show 'We'll Be Right Back' screen when camera RTSP is unreachable (keeps YouTube stream alive instead of going offline)" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
 
   <!-- Ports -->
   <Config Name="RTSP Port" Target="8554" Default="8554" Mode="tcp" Description="RTSP output port (only if ENABLE_LOCAL_STREAM=true)" Type="Port" Display="always" Required="false" Mask="false">8554</Config>

@@ -11,6 +11,13 @@ services:
       - /dev/dri:/dev/dri
 
     environment:
+      # --- USER PERMISSIONS ---
+      # Set these to match your host user/group for proper file ownership
+      # Unraid: PUID=99, PGID=100 (nobody:users)
+      # Most Linux: PUID=1000, PGID=1000
+      - PUID=99
+      - PGID=100
+
       # --- REQUIRED SETTINGS ---
       - RTSP_SOURCE=rtsp://user:pass@192.168.1.50:554/stream
       - ADMIN_USER=admin
@@ -43,6 +50,10 @@ services:
 
       # --- DEBUGGING ---
       # - WEATHER_DEBUG=true
+      # - FFMPEG_PROGRESS_LOG=true  # Enable frame logging (WARNING: ~10MB/day)
+      
+      # --- FALLBACK MODE ---
+      - FALLBACK_ENABLED=true  # Show "We'll Be Right Back" when camera is unreachable
 
       # --- VIDEO OUTPUT SETTINGS ---
       # - VIDEO_BITRATE=14M
@@ -66,7 +77,7 @@ services:
       # - YOUTUBE_HEIGHT=1440
 
       # =======================================================================
-      # SELF-HEALING WATCHDOG SETTINGS (v2.8.1)
+      # SELF-HEALING WATCHDOG SETTINGS
       # =======================================================================
       # Enable/disable the self-healing watchdog
       - WATCHDOG_ENABLED=true
@@ -75,13 +86,11 @@ services:
       # The watchdog will poll this to check if the stream is live
       - WATCHDOG_STATUS_URL=https://yourdomain.com/youtube_status.php
 
-      # --- NEW IN v2.8.1 ---
       # Seconds to wait after boot before first status check
       # YouTube needs time to recognize the ingest (default: 180 = 3 minutes)
       - WATCHDOG_STARTUP_DELAY=180
 
       # Seconds to wait for YouTube to show "live" after restart
-      # Extended from 60s to 120s for more reliable verification
       - WATCHDOG_VERIFICATION_TIMEOUT=120
 
       # Check RTSP source health before recovery attempts
@@ -89,12 +98,9 @@ services:
       - WATCHDOG_RTSP_CHECK=true
 
       # Enable detailed logging of status checks
-      # Shows full API responses and RTSP URLs (credentials masked)
       - WATCHDOG_VERBOSE=true
 
-      # --- EXISTING WATCHDOG SETTINGS ---
       # How often to check stream status (seconds)
-      # Default: 30 (every 30 seconds)
       - WATCHDOG_CHECK_INTERVAL=30
 
       # Initial delay before restart after detecting offline (seconds)
@@ -154,6 +160,8 @@ services:
   #   container_name: vantagecam
   #   # NO devices section needed
   #   environment:
+  #     - PUID=99
+  #     - PGID=100
   #     - RTSP_SOURCE=rtsp://user:pass@192.168.1.50:554/stream
   #     - ADMIN_USER=admin
   #     - ADMIN_PASS=change_me_please
@@ -168,7 +176,7 @@ services:
   #     # YouTube
   #     - YOUTUBE_URL=rtmp://a.rtmp.youtube.com/live2
   #     - YOUTUBE_KEY=xxxx-xxxx-xxxx-xxxx
-  #     # Self-healing (v2.8.1)
+  #     # Self-healing
   #     - WATCHDOG_ENABLED=true
   #     - WATCHDOG_STATUS_URL=https://yourdomain.com/youtube_status.php
   #     - WATCHDOG_STARTUP_DELAY=180
