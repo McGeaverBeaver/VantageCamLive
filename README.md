@@ -1,4 +1,4 @@
-# VantageCam Live v2.8.2
+# VantageCam Live v2.8.3
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -19,7 +19,7 @@ Transform a standard security camera feed into a professional broadcast without 
 ## 📋 Table of Contents
 
 - [Key Features](#-key-features)
-- [What's New in v2.8.2](#-whats-new-in-v282)
+- [What's New in v2.8.3](#-whats-new-in-v282)
 - [Getting Started](#-getting-started)
 - [Docker Compose](#-docker-compose)
 - [Direct-to-YouTube Mode](#-direct-to-youtube-mode)
@@ -66,7 +66,7 @@ Transform a standard security camera feed into a professional broadcast without 
 
 ---
 
-## 🚀 What's New in v2.8.2
+## 🚀 What's New in v2.8.3
 
 ### "Zombie Killer" Stream Monitor
 New heartbeat logic detects if the stream **freezes** (even if the FFmpeg process stays alive) by monitoring the progress file size. If no new data is written for 12 seconds, the stream is forcibly restarted.
@@ -570,7 +570,7 @@ Control stream audio via HTTP:
 - The 3-retry mechanism should handle this, but check camera responsiveness
 
 **"Ping Failed" loop during camera reboot**
-- Fixed in v2.8.2 — the BRB stream is now explicitly killed when camera recovers
+- Fixed in v2.8.3 — the BRB stream is now explicitly killed when camera recovers
 
 **BRB screen doesn't show overlays**
 - Verify overlay files exist in `/config/`
@@ -626,7 +626,7 @@ Control stream audio via HTTP:
 
 ## 📜 Changelog
 
-### v2.8.2 - Fallback Mode & Zombie Killer
+### v2.8.3 - Fallback Mode & Zombie Killer
 
 **Major Features:**
 - **"Zombie Killer" Monitor** — Detects frozen streams (even when process is alive) by monitoring progress file size. Auto-restarts within 12 seconds.
