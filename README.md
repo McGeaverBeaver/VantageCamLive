@@ -1,4 +1,4 @@
-# VantageCam Live v2.8.3
+# VantageCam Live v2.8.4
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -19,7 +19,7 @@ Transform a standard security camera feed into a professional broadcast without 
 ## 📋 Table of Contents
 
 - [Key Features](#-key-features)
-- [What's New in v2.8.3](#-whats-new-in-v282)
+- [What's New in v2.8.4](#-whats-new-in-v284)
 - [Getting Started](#-getting-started)
 - [Docker Compose](#-docker-compose)
 - [Direct-to-YouTube Mode](#-direct-to-youtube-mode)
@@ -66,25 +66,40 @@ Transform a standard security camera feed into a professional broadcast without 
 
 ---
 
-## 🚀 What's New in v2.8.3
+## 🚀 What's New in v2.8.4
 
-### "Zombie Killer" Stream Monitor
-New heartbeat logic detects if the stream **freezes** (even if the FFmpeg process stays alive) by monitoring the progress file size. If no new data is written for 12 seconds, the stream is forcibly restarted.
+### Multi-Alert Stacking (Environment Canada)
+When multiple weather alerts are active for your region, they now display in a stacked layout instead of showing only the first alert:
 
-### Instant Camera Recovery
-The system now switches back to the main camera **the instant the network port opens**, rather than waiting for full video decoding. This reduces recovery time from ~10 seconds to under 3 seconds.
+- **Single alert:** Full-height display (unchanged)
+- **Multiple alerts:** Shared region header + stacked alert rows at half-height
+- Each alert keeps its own color (red/orange/yellow) and timestamp
+- Supports up to 3 simultaneous alerts
 
-### Unified Overlay System
-The "We'll Be Right Back" screen now displays your **full set of dynamic overlays** (Weather, Ads, Time) — making it look identical to your live stream. Viewers see a professional holding screen, not a blank image.
+```
+┌─────────────────────────────────────────────┐
+│     Innisfil - New Tecumseth - Angus        │  ← Shared region
+├─────────────────────────────────────────────┤
+│ ⚠ ORANGE WARNING - SNOW SQUALL       12:32 │  ← Alert 1
+├─────────────────────────────────────────────┤
+│ ⚠ YELLOW WARNING - WIND              12:53 │  ← Alert 2
+└─────────────────────────────────────────────┘
+```
 
-### Reboot Loop Fix
-Solved the "Ping Failed" restart loop by ensuring the BRB FFmpeg process is **explicitly killed** the moment the main camera recovers. No more zombie processes fighting for the stream.
+### Real-Time Weather Visibility
+Fixed visibility readings being inaccurate during rapidly changing conditions. Now uses OpenMeteo's real-time observation data instead of hourly forecasts.
 
-### Startup Stability
-Added a **3-attempt retry mechanism** on boot. If the camera is slow to start (common after power outages), VantageCam will retry before falling back to the BRB screen.
+### RTSP Stream Reliability
+Major improvements for challenging network conditions (high winds, WiFi interference, congestion):
 
-### PUID/PGID Support
-Full support for running as a non-root user. Set `PUID=99` and `PGID=100` on Unraid to have files owned by `nobody:users` instead of `root`.
+| Improvement | Benefit |
+|:------------|:--------|
+| 4MB receive buffer | Absorbs network hiccups |
+| 500ms max delay | Time to reassemble out-of-order packets |
+| Discard corrupt frames | Clean recovery instead of errors |
+| Ignore decode errors | Continue streaming through glitches |
+
+**Result:** Eliminates `RTP: bad cseq` and `Could not find ref with POC` errors. Smoother video with ~300-500ms additional latency (negligible for live streams).
 
 ---
 
@@ -223,7 +238,7 @@ When streaming only to YouTube (no local preview), the container uses an optimiz
 | **MediaMTX** | Camera → FFmpeg → RTSP → FFmpeg → YouTube | `ENABLE_LOCAL_STREAM=true` |
 
 **Benefits of Direct mode:**
-- ~50MB less RAM
+- ~400MB less RAM
 - 1-2 fewer CPU cores
 - Lower latency
 
@@ -609,7 +624,12 @@ Control stream audio via HTTP:
 ### Stream Issues
 
 **"Could not find ref with POC" errors**
-- Normal during startup, usually resolves quickly
+- Rare after v2.8.4 RTSP improvements
+- If persistent, check network stability between camera and server
+
+**"RTP: bad cseq" errors**
+- Should be eliminated in v2.8.4 with TCP transport and buffering
+- If still occurring, increase `buffer_size` in start.sh
 
 **"deprecated pixel format" warnings**
 - Harmless FFmpeg warning, ignore
@@ -625,6 +645,20 @@ Control stream audio via HTTP:
 ---
 
 ## 📜 Changelog
+
+### v2.8.4 - Multi-Alert Stacking & RTSP Reliability
+
+**New Features:**
+- **Multi-Alert Stacking** — Environment Canada alerts now stack when multiple are active (e.g., Snow Squall + Wind Warning). Each alert displays with its own color and timestamp.
+- **Real-Time Visibility** — Weather visibility now uses current observations instead of hourly forecasts, accurate during rapidly changing conditions.
+
+**Improvements:**
+- **RTSP Reliability Overhaul** — 4MB buffer, 500ms max delay, corrupt frame discarding, and error tolerance. Eliminates decoder errors during network instability.
+- **Doubled thread queue size** — Better handling of bursty network traffic.
+
+**Fixed:**
+- Visibility showing incorrect values during snow squalls/fog
+- Only first alert displaying when multiple alerts active
 
 ### v2.8.3 - Fallback Mode & Zombie Killer
 
@@ -679,19 +713,16 @@ Control stream audio via HTTP:
 - Dynamic sponsor rotation
 
 ---
-
 ## 📄 License
 
 MIT License - See [LICENSE](LICENSE) for details.
 
 ---
-
 ## 🤝 Contributing
 
 Contributions welcome! Please open an issue or submit a PR.
 
 ---
-
 ## 💬 Support
 
 - **Issues:** [GitHub Issues](https://github.com/McGeaverBeaver/VantageCamLive/issues)
