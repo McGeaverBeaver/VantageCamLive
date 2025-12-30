@@ -205,7 +205,17 @@ def get_alert_colors(alert_type, severity, base_color):
 
 # ================= WEATHER GENERATION =================
 def get_weather_openmeteo():
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}&current_weather=true&hourly=relativehumidity_2m,surface_pressure,apparent_temperature,visibility,precipitation_probability&daily=temperature_2m_max,temperature_2m_min&timezone={TIMEZONE}"
+    # Use 'current' for real-time observations instead of hourly forecast data
+    # This ensures visibility reflects actual conditions during rapidly changing weather
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={LAT}&longitude={LON}"
+        f"&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,"
+        f"surface_pressure,wind_speed_10m,wind_direction_10m,is_day,visibility,precipitation"
+        f"&hourly=precipitation_probability"
+        f"&daily=temperature_2m_max,temperature_2m_min"
+        f"&timezone={TIMEZONE}"
+    )
     try:
         if DEBUG_MODE: log(f"[Right-Weather] API URL: {url}")
         resp = requests.get(url, timeout=10)
@@ -246,30 +256,55 @@ def generate_weather_layer(width=900, height=350):
         return None
 
     try:
-        current = data['current_weather']
-        hourly = data['hourly']
-        daily = data['daily']
-        temp = current['temperature']
-        wind = current['windspeed']
-        wind_deg = current['winddirection']
-        code = current['weathercode']
-        is_day = current['is_day']
-        dt_obj = datetime.datetime.strptime(current['time'], "%Y-%m-%dT%H:%M")
+        current = data.get('current', {})
+        hourly = data.get('hourly', {})
+        daily = data.get('daily', {})
+
+        # Current observations (real-time data)
+        temp = current.get('temperature_2m', 0)
+        wind = current.get('wind_speed_10m', 0)
+        wind_deg = current.get('wind_direction_10m', 0)
+        code = current.get('weather_code', 0)
+        is_day = current.get('is_day', 1)
+
+        # Parse time from current data
+        time_str = current.get('time', '')
+        try:
+            dt_obj = datetime.datetime.fromisoformat(time_str)
+        except:
+            dt_obj = datetime.datetime.now()
 
         dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
         wind_dir_str = dirs[round(wind_deg / 45) % 8]
 
+        # Use CURRENT observations for real-time accuracy (especially visibility!)
+        feel = current.get('apparent_temperature', temp)
+        hum = current.get('relative_humidity_2m', 0)
+        press = current.get('surface_pressure', 0)
+
+        # Visibility from CURRENT data - converts meters to km
+        # This reflects actual current conditions, not forecast
+        vis_meters = current.get('visibility', 10000)
+        vis = vis_meters / 1000  # Convert to km
+
+        # Precipitation probability still from hourly (forecast)
         curr_hr = dt_obj.hour
-        feel = hourly['apparent_temperature'][curr_hr] if hourly else temp
-        hum = hourly['relativehumidity_2m'][curr_hr] if hourly else 0
-        press = hourly['surface_pressure'][curr_hr] if hourly else 0
-        precip = hourly['precipitation_probability'][curr_hr] if hourly else 0
-        vis = hourly['visibility'][curr_hr]/1000 if hourly else 10
-        high = daily['temperature_2m_max'][0] if daily else temp
-        low = daily['temperature_2m_min'][0] if daily else temp
+        precip = 0
+        if hourly and 'precipitation_probability' in hourly:
+            hourly_times = hourly.get('time', [])
+            for i, t in enumerate(hourly_times):
+                try:
+                    if datetime.datetime.fromisoformat(t).hour == curr_hr:
+                        precip = hourly['precipitation_probability'][i]
+                        break
+                except:
+                    pass
+
+        high = daily['temperature_2m_max'][0] if daily and 'temperature_2m_max' in daily else temp
+        low = daily['temperature_2m_min'][0] if daily and 'temperature_2m_min' in daily else temp
 
         if DEBUG_MODE:
-            log(f"[Right-Weather] Temp={temp}C | Rain={precip}% | Wind={wind}km/h | Heading={CAMERA_HEADING}")
+            log(f"[Right-Weather] Temp={temp}C | Rain={precip}% | Wind={wind}km/h | Vis={vis:.1f}km | Heading={CAMERA_HEADING}")
 
         img = Image.new('RGBA', (int(width), int(height)), (0, 0, 0, 180))
         draw = ImageDraw.Draw(img)
@@ -310,54 +345,109 @@ def generate_weather(output_path, width=900, height=350):
     return False
 
 # ================= ALERT GENERATION =================
-def fetch_title_and_time_from_xml(zone_code):
+def fetch_all_alerts_from_xml(zone_code):
+    """
+    Fetch ALL alerts from Environment Canada XML feed.
+    Returns list of (title, summary/issued_text) tuples.
+    """
     xml_url = f"https://weather.gc.ca/rss/battleboard/{zone_code}_e.xml"
     if DEBUG_MODE: log(f"[EC-Alert] Fetching XML: {xml_url}")
     try:
         r = requests.get(xml_url, timeout=5)
-        if r.status_code != 200: return None, None
+        if r.status_code != 200:
+            return []
         root = ET.fromstring(r.content)
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
-        for entry in root.findall('atom:entry', ns):
-            title = entry.find('atom:title', ns).text
-            summary = entry.find('atom:summary', ns).text
-            if title and "No watches or warnings" not in title:
-                return title, summary
-        return None, None
-    except: return None, None
 
-async def fetch_ec_alert():
-    if not HAS_EC: return None, None, None, None, None
+        alerts = []
+        for entry in root.findall('atom:entry', ns):
+            title_elem = entry.find('atom:title', ns)
+            summary_elem = entry.find('atom:summary', ns)
+
+            if title_elem is not None:
+                title = title_elem.text
+                summary = summary_elem.text if summary_elem is not None else None
+
+                if title and "No watches or warnings" not in title:
+                    alerts.append((title, summary))
+
+        return alerts
+    except Exception as e:
+        if DEBUG_MODE: log(f"[EC-Alert] XML fetch error: {e}")
+        return []
+
+def fetch_title_and_time_from_xml(zone_code):
+    """Legacy function - returns only first alert for backward compatibility"""
+    alerts = fetch_all_alerts_from_xml(zone_code)
+    if alerts:
+        return alerts[0]
+    return None, None
+
+async def fetch_ec_alerts():
+    """
+    Fetch ALL Environment Canada alerts for the location.
+    Returns list of tuples: [(title, color, issued_text, alert_type, severity), ...]
+    """
+    if not HAS_EC:
+        return []
     try:
         ec = ECWeather(coordinates=(LAT, LON))
         await ec.update()
-        if ec.alerts:
-            for a_id, a_data in ec.alerts.items():
-                if 'value' in a_data and isinstance(a_data['value'], list) and len(a_data['value']) > 0:
-                    alert_item = a_data['value'][0]
-                    title = alert_item.get('title', 'ALERT')
-                    ec_color = alert_item.get('alertColourLevel', 'red')
-                    alert_url = alert_item.get('url', 'N/A')
-                    issued_text = None
 
-                    match = re.search(r'([a-z]{2}rm\d+)', alert_url)
-                    if match:
-                        zone_code = match.group(1)
-                        if DEBUG_MODE: log(f"[EC-Alert] Detected Zone: {zone_code}")
-                        better_title, better_summary = fetch_title_and_time_from_xml(zone_code)
-                        if better_title: title = better_title
-                        if better_summary: issued_text = better_summary
+        if not ec.alerts:
+            return []
 
-                    alert_type, severity, base_color = classify_alert(title)
+        zone_code = None
+        # First, find the zone code from any alert URL
+        for a_id, a_data in ec.alerts.items():
+            if 'value' in a_data and isinstance(a_data['value'], list) and len(a_data['value']) > 0:
+                alert_url = a_data['value'][0].get('url', '')
+                match = re.search(r'([a-z]{2}rm\d+)', alert_url)
+                if match:
+                    zone_code = match.group(1)
+                    break
 
-                    if DEBUG_MODE:
-                        log(f"[EC-Alert] Title: {title} -> Type={alert_type}, Color={base_color}")
+        if not zone_code:
+            if DEBUG_MODE: log("[EC-Alert] No zone code found in alerts")
+            return []
 
-                    return title.upper(), base_color, issued_text, alert_type, severity
-        return None, None, None, None, None
+        if DEBUG_MODE: log(f"[EC-Alert] Detected Zone: {zone_code}")
+
+        # Fetch ALL alerts from XML (authoritative source with proper titles/times)
+        xml_alerts = fetch_all_alerts_from_xml(zone_code)
+
+        if not xml_alerts:
+            if DEBUG_MODE: log("[EC-Alert] No alerts in XML feed")
+            return []
+
+        # Process each alert
+        processed_alerts = []
+        for title, issued_text in xml_alerts:
+            alert_type, severity, base_color = classify_alert(title)
+
+            if DEBUG_MODE:
+                log(f"[EC-Alert] Title: {title} -> Type={alert_type}, Color={base_color}")
+
+            processed_alerts.append((
+                title.upper(),
+                base_color,
+                issued_text,
+                alert_type,
+                severity
+            ))
+
+        return processed_alerts
+
     except Exception as e:
         if DEBUG_MODE: log(f"[EC-Alert] Error: {e}")
-        return None, None, None, None, None
+        return []
+
+async def fetch_ec_alert():
+    """Legacy function - returns only first alert for backward compatibility"""
+    alerts = await fetch_ec_alerts()
+    if alerts:
+        return alerts[0]
+    return None, None, None, None, None
 
 def fetch_nws_alert():
     try:
@@ -394,153 +484,249 @@ def fetch_nws_alert():
         if DEBUG_MODE: log(f"[NWS-Alert] Error: {e}")
         return None, None, None, None, None
 
-def draw_watch_pattern(draw, width, height, border_color, line_width=3):
+def draw_watch_pattern(draw, x_offset, y_offset, width, height, border_color, line_width=3):
+    """Draw dashed border for WATCH alerts within a specific region"""
     dash_length = 15
     gap_length = 10
 
-    x = 0
-    while x < width:
-        draw.line([(x, 2), (min(x + dash_length, width), 2)], fill=border_color, width=line_width)
+    # Top border
+    x = x_offset
+    while x < x_offset + width:
+        draw.line([(x, y_offset + 2), (min(x + dash_length, x_offset + width), y_offset + 2)],
+                  fill=border_color, width=line_width)
         x += dash_length + gap_length
 
-    x = 0
-    while x < width:
-        draw.line([(x, height - 3), (min(x + dash_length, width), height - 3)], fill=border_color, width=line_width)
+    # Bottom border
+    x = x_offset
+    while x < x_offset + width:
+        draw.line([(x, y_offset + height - 3), (min(x + dash_length, x_offset + width), y_offset + height - 3)],
+                  fill=border_color, width=line_width)
         x += dash_length + gap_length
 
-    y = 0
-    while y < height:
-        draw.line([(2, y), (2, min(y + dash_length, height))], fill=border_color, width=line_width)
+    # Left border
+    y = y_offset
+    while y < y_offset + height:
+        draw.line([(x_offset + 2, y), (x_offset + 2, min(y + dash_length, y_offset + height))],
+                  fill=border_color, width=line_width)
         y += dash_length + gap_length
 
-    y = 0
-    while y < height:
-        draw.line([(width - 3, y), (width - 3, min(y + dash_length, height))], fill=border_color, width=line_width)
+    # Right border
+    y = y_offset
+    while y < y_offset + height:
+        draw.line([(x_offset + width - 3, y), (x_offset + width - 3, min(y + dash_length, y_offset + height))],
+                  fill=border_color, width=line_width)
         y += dash_length + gap_length
+
+def draw_single_alert(draw, img, alert_data, y_offset, width, row_height, flash_state="on", show_region=True):
+    """
+    Draw a single alert row.
+    Returns: needs_flash (bool)
+    """
+    alert_text, alert_color, issued_text, alert_type, severity = alert_data
+
+    bg_rgba, text_fill, border_color, is_watch = get_alert_colors(alert_type, severity, alert_color)
+    needs_flash = (alert_type == "WARNING" and alert_color == "red")
+
+    if needs_flash and flash_state == "off":
+        bg_rgba = (80, 15, 15, 255)
+
+    # Parse alert text for warning type and region
+    if ',' in alert_text:
+        parts = alert_text.split(',', 1)
+        warning_text = parts[0].strip()
+        region_text = parts[1].strip()
+    else:
+        warning_text = alert_text
+        region_text = ""
+
+    # Draw background rectangle
+    draw.rectangle([(0, y_offset), (width, y_offset + row_height)], fill=bg_rgba)
+
+    # Draw watch pattern if needed
+    if is_watch:
+        draw_watch_pattern(draw, 0, y_offset, width, row_height, border_color)
+
+    # Determine layout based on row height
+    is_compact = (row_height < 100)  # Half-height mode
+
+    if is_compact:
+        # COMPACT LAYOUT (for stacked alerts)
+        # Icon on left, warning text centered, issued time on right
+        f_icon = get_font(35)
+        draw.text((15, y_offset + (row_height - 35) // 2), "\u26A0", font=f_icon, fill=text_fill)
+
+        # Warning text (centered)
+        max_w = width - 200  # Leave room for icon and timestamp
+        font_size = 32
+        f_warn = get_font(font_size)
+
+        while f_warn.getlength(warning_text) > max_w and font_size > 18:
+            font_size -= 2
+            f_warn = get_font(font_size)
+
+        warn_bbox = draw.textbbox((0, 0), warning_text, font=f_warn)
+        warn_w = warn_bbox[2] - warn_bbox[0]
+        warn_x = max(60, (width - warn_w) // 2)
+        warn_y = y_offset + (row_height - font_size) // 2
+        draw.text((warn_x, warn_y), warning_text, font=f_warn, fill=text_fill)
+
+        # Issued time (right side, smaller)
+        if issued_text:
+            issued_text = re.sub(r'<[^>]+>', '', issued_text).strip()
+            time_match = re.search(r'(\d{1,2}:\d{2}\s*(?:AM|PM)?)', issued_text, re.IGNORECASE)
+            if time_match:
+                short_time = time_match.group(1)
+            else:
+                short_time = ""
+
+            if short_time:
+                f_ts = get_font(18)
+                ts_bbox = draw.textbbox((0, 0), short_time, font=f_ts)
+                ts_w = ts_bbox[2] - ts_bbox[0]
+                draw.text((width - ts_w - 15, y_offset + (row_height - 18) // 2),
+                          short_time, font=f_ts, fill=text_fill)
+    else:
+        # FULL LAYOUT (single alert, original style)
+        f_icon = get_font(55)
+        draw.text((25, y_offset + 45), "\u26A0", font=f_icon, fill=text_fill)
+
+        if show_region and region_text:
+            f_region = get_font(24)
+            reg_bbox = draw.textbbox((0, 0), region_text, font=f_region)
+            reg_w = reg_bbox[2] - reg_bbox[0]
+            reg_x = max(90, 490 - (reg_w / 2))
+            draw.text((reg_x, y_offset + 10), region_text, font=f_region, fill=text_fill)
+
+        max_w = width - 110
+        font_size = 55
+        f_warn = get_font(font_size)
+
+        while f_warn.getlength(warning_text) > max_w and font_size > 20:
+            font_size -= 2
+            f_warn = get_font(font_size)
+
+        warn_bbox = draw.textbbox((0, 0), warning_text, font=f_warn)
+        warn_w = warn_bbox[2] - warn_bbox[0]
+        warn_x = max(90, 490 - (warn_w / 2))
+        warn_y = y_offset + (45 if (show_region and region_text) else 35)
+        draw.text((warn_x, warn_y), warning_text, font=f_warn, fill=text_fill)
+
+        if issued_text:
+            issued_text = re.sub(r'<[^>]+>', '', issued_text).strip()
+            ts_size = 24
+            f_ts = get_font(ts_size)
+            while f_ts.getlength(issued_text) > max_w and ts_size > 14:
+                ts_size -= 2
+                f_ts = get_font(ts_size)
+
+            ts_bbox = draw.textbbox((0, 0), issued_text, font=f_ts)
+            ts_w = ts_bbox[2] - ts_bbox[0]
+            ts_x = max(90, 490 - (ts_w / 2))
+            draw.text((ts_x, y_offset + 110), issued_text, font=f_ts, fill=text_fill)
+
+    return needs_flash
 
 def generate_alert_layer(width=900, height=150, flash_state="on"):
+    """
+    Generate alert overlay supporting multiple stacked alerts.
+
+    Single alert: Full height display
+    Multiple alerts:
+      - Region header (shared) at top
+      - Half-height alert rows stacked below
+    """
     country = detect_country()
+
+    # Fetch ALL alerts
     if country == "CA":
-        result = asyncio.run(fetch_ec_alert()) if HAS_EC else (None, None, None, None, None)
+        alerts = asyncio.run(fetch_ec_alerts()) if HAS_EC else []
     else:
-        result = fetch_nws_alert()
+        # NWS single alert (legacy) - wrap in list
+        single_result = fetch_nws_alert()
+        if single_result and single_result[0]:
+            alerts = [single_result]
+        else:
+            alerts = []
 
-    if result is None or len(result) < 5:
-        alert_text, alert_color, issued_text, alert_type, severity = None, None, None, None, None
-    else:
-        alert_text, alert_color, issued_text, alert_type, severity = result
-
-    if not alert_text:
+    # No alerts - return transparent image
+    if not alerts:
         return Image.new('RGBA', (int(width), int(height)), (0, 0, 0, 0)), height, False, False
 
     try:
-        is_statement = (alert_type == "STATEMENT")
+        # Check if any alert is a statement (compact display)
+        has_statement = any(a[3] == "STATEMENT" for a in alerts)
+
+        # Single alert - use original full layout
+        if len(alerts) == 1:
+            alert_data = alerts[0]
+            alert_text, alert_color, issued_text, alert_type, severity = alert_data
+
+            is_statement = (alert_type == "STATEMENT")
+            content_height = height // 2 if is_statement else height
+
+            img = Image.new('RGBA', (int(width), int(height)), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+
+            needs_flash = draw_single_alert(draw, img, alert_data, 0, width, content_height,
+                                            flash_state, show_region=True)
+
+            if DEBUG_MODE:
+                log(f"[Alerts] Single alert: Type={alert_type}, Color={alert_color}, Flash={needs_flash}")
+
+            return img, height, needs_flash, is_statement
+
+        # MULTIPLE ALERTS - Stack them!
+        # Layout: Region header (30px) + alert rows (remaining space split evenly)
+
         img = Image.new('RGBA', (int(width), int(height)), (0, 0, 0, 0))
-
-        bg_rgba, text_fill, border_color, is_watch = get_alert_colors(alert_type, severity, alert_color)
-
-        needs_flash = (alert_type == "WARNING" and alert_color == "red")
-
-        if needs_flash and flash_state == "off":
-            bg_rgba = (80, 15, 15, 255)
-
-        if is_statement:
-            content_height = height // 2
-        else:
-            content_height = height
-
         draw = ImageDraw.Draw(img)
-        draw.rectangle([(0, 0), (width, content_height)], fill=bg_rgba)
 
-        if is_watch:
-            draw_watch_pattern(draw, width, content_height, border_color)
-
-        if ',' in alert_text:
-            parts = alert_text.split(',', 1)
-            warning_text = parts[0].strip()
-            region_text = parts[1].strip()
+        # Extract shared region from first alert
+        first_alert_text = alerts[0][0]
+        if ',' in first_alert_text:
+            region_text = first_alert_text.split(',', 1)[1].strip()
         else:
-            warning_text = alert_text
             region_text = ""
 
-        if is_statement:
-            f_icon = get_font(30)
-            draw.text((12, 12), "\u26A0", font=f_icon, fill=text_fill)
+        # Draw region header bar (dark semi-transparent)
+        header_height = 30
+        draw.rectangle([(0, 0), (width, header_height)], fill=(30, 30, 30, 220))
 
-            max_w = width - 70
-            font_size = 30
-            f_warn = get_font(font_size)
+        if region_text:
+            f_region = get_font(22)
+            reg_bbox = draw.textbbox((0, 0), region_text, font=f_region)
+            reg_w = reg_bbox[2] - reg_bbox[0]
+            reg_x = (width - reg_w) // 2
+            draw.text((reg_x, 4), region_text, font=f_region, fill="white")
 
-            while f_warn.getlength(warning_text) > max_w and font_size > 16:
-                font_size -= 2
-                f_warn = get_font(font_size)
+        # Calculate row height for alert panels
+        remaining_height = height - header_height
+        num_alerts = min(len(alerts), 3)  # Cap at 3 alerts max to keep readable
+        row_height = remaining_height // num_alerts
 
-            warn_bbox = draw.textbbox((0, 0), warning_text, font=f_warn)
-            warn_w = warn_bbox[2] - warn_bbox[0]
-            warn_x = max(50, (width - warn_w) // 2)
-            draw.text((warn_x, 10), warning_text, font=f_warn, fill=text_fill)
+        # Track if any alert needs flash
+        any_needs_flash = False
 
-            f_small = get_font(18)
-            if region_text:
-                draw.text((50, 48), region_text, font=f_small, fill=text_fill)
+        # Draw each alert row
+        for i, alert_data in enumerate(alerts[:num_alerts]):
+            y_offset = header_height + (i * row_height)
+            needs_flash = draw_single_alert(draw, img, alert_data, y_offset, width, row_height,
+                                            flash_state, show_region=False)
+            if needs_flash:
+                any_needs_flash = True
 
-            if issued_text:
-                issued_text = re.sub(r'<[^>]+>', '', issued_text).strip()
-                time_match = re.search(r'(\d{1,2}:\d{2}\s*(?:AM|PM)?)', issued_text, re.IGNORECASE)
-                if time_match:
-                    short_time = f"UPDATED: {time_match.group(1)}"
-                else:
-                    short_time = issued_text[:20] if len(issued_text) > 20 else issued_text
-
-                ts_bbox = draw.textbbox((0, 0), short_time, font=f_small)
-                ts_w = ts_bbox[2] - ts_bbox[0]
-                draw.text((width - ts_w - 20, 48), short_time, font=f_small, fill=text_fill)
-
-        else:
-            f_icon = get_font(55)
-            draw.text((25, 45), "\u26A0", font=f_icon, fill=text_fill)
-
-            if region_text:
-                f_region = get_font(24)
-                reg_bbox = draw.textbbox((0, 0), region_text, font=f_region)
-                reg_w = reg_bbox[2] - reg_bbox[0]
-                reg_x = max(90, 490 - (reg_w / 2))
-                draw.text((reg_x, 10), region_text, font=f_region, fill=text_fill)
-
-            max_w = width - 110
-            font_size = 55
-            f_warn = get_font(font_size)
-
-            while f_warn.getlength(warning_text) > max_w and font_size > 20:
-                font_size -= 2
-                f_warn = get_font(font_size)
-
-            warn_bbox = draw.textbbox((0, 0), warning_text, font=f_warn)
-            warn_w = warn_bbox[2] - warn_bbox[0]
-            warn_x = max(90, 490 - (warn_w / 2))
-            warn_y = 45 if region_text else 35
-            draw.text((warn_x, warn_y), warning_text, font=f_warn, fill=text_fill)
-
-            if issued_text:
-                issued_text = re.sub(r'<[^>]+>', '', issued_text).strip()
-                ts_size = 24
-                f_ts = get_font(ts_size)
-                while f_ts.getlength(issued_text) > max_w and ts_size > 14:
-                    ts_size -= 2
-                    f_ts = get_font(ts_size)
-
-                ts_bbox = draw.textbbox((0, 0), issued_text, font=f_ts)
-                ts_w = ts_bbox[2] - ts_bbox[0]
-                ts_x = max(90, 490 - (ts_w / 2))
-                draw.text((ts_x, 110), issued_text, font=f_ts, fill=text_fill)
+            if DEBUG_MODE:
+                log(f"[Alerts] Stacked alert {i+1}: {alert_data[0][:30]}... Color={alert_data[1]}")
 
         if DEBUG_MODE:
-            log(f"[Alerts] Generated: Type={alert_type}, Color={alert_color}, Flash={needs_flash}, Statement={is_statement}")
+            log(f"[Alerts] Generated {num_alerts} stacked alerts, Flash={any_needs_flash}")
 
-        return img, height, needs_flash, is_statement
+        return img, height, any_needs_flash, False
 
     except Exception as e:
         log(f"[Alerts] Gen Error: {e}")
+        import traceback
+        traceback.print_exc()
         return Image.new('RGBA', (int(width), int(height)), (0, 0, 0, 0)), height, False, False
 
 def generate_alerts(output_path, width=900, height=150):
@@ -608,17 +794,17 @@ def generate_fallback(output_path, width=2560, height=1440, message="We'll Be Ri
     """
     try:
         width, height = int(width), int(height)
-        
+
         # Dark gradient background
         img = Image.new('RGB', (width, height), (20, 20, 30))
         draw = ImageDraw.Draw(img)
-        
+
         # Add subtle gradient effect (darker at edges)
         for i in range(height // 2):
             alpha = int(30 * (1 - i / (height // 2)))
             draw.rectangle([0, i, width, i+1], fill=(20 - alpha//2, 20 - alpha//2, 30 - alpha//2))
             draw.rectangle([0, height-i-1, width, height-i], fill=(20 - alpha//2, 20 - alpha//2, 30 - alpha//2))
-        
+
         # Main message
         try:
             font_large = ImageFont.truetype(FONT_PATH, 120)
@@ -626,29 +812,29 @@ def generate_fallback(output_path, width=2560, height=1440, message="We'll Be Ri
         except:
             font_large = ImageFont.load_default()
             font_small = ImageFont.load_default()
-        
+
         # Center the main message
         bbox = draw.textbbox((0, 0), message, font=font_large)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
         x = (width - text_w) // 2
         y = (height - text_h) // 2 - 50
-        
+
         # Draw shadow
         draw.text((x + 4, y + 4), message, font=font_large, fill=(0, 0, 0))
         # Draw main text
         draw.text((x, y), message, font=font_large, fill=(255, 255, 255))
-        
+
         # Subtitle
         subtitle = "Experiencing technical difficulties - stream will resume shortly"
         bbox_sub = draw.textbbox((0, 0), subtitle, font=font_small)
         sub_w = bbox_sub[2] - bbox_sub[0]
         x_sub = (width - sub_w) // 2
         y_sub = y + text_h + 60
-        
+
         draw.text((x_sub + 2, y_sub + 2), subtitle, font=font_small, fill=(0, 0, 0))
         draw.text((x_sub, y_sub), subtitle, font=font_small, fill=(180, 180, 180))
-        
+
         # Add location name if available
         if LOCATION_NAME:
             bbox_loc = draw.textbbox((0, 0), LOCATION_NAME, font=font_small)
@@ -656,13 +842,13 @@ def generate_fallback(output_path, width=2560, height=1440, message="We'll Be Ri
             x_loc = (width - loc_w) // 2
             y_loc = y - 100
             draw.text((x_loc, y_loc), LOCATION_NAME, font=font_small, fill=(100, 150, 255))
-        
+
         # Add timestamp
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         bbox_time = draw.textbbox((0, 0), timestamp, font=font_small)
         time_w = bbox_time[2] - bbox_time[0]
         draw.text((width - time_w - 40, height - 80), timestamp, font=font_small, fill=(100, 100, 100))
-        
+
         img.save(output_path, "PNG", optimize=True)
         return True
     except Exception as e:

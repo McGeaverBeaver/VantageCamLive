@@ -39,7 +39,7 @@ YOUTUBE_KEY="${YOUTUBE_KEY:-}"
 YOUTUBE_BITRATE="${YOUTUBE_BITRATE:-4500k}"
 YOUTUBE_WIDTH="${YOUTUBE_WIDTH:-2560}"
 YOUTUBE_HEIGHT="${YOUTUBE_HEIGHT:-1440}"
-SCALING_MODE="${SCALING_MODE:-fill}" 
+SCALING_MODE="${SCALING_MODE:-fill}"
 VIDEO_BITRATE="${VIDEO_BITRATE:-14M}"
 VIDEO_FPS="${VIDEO_FPS:-30}"
 WEATHER_ENABLED="${WEATHER_ENABLED:-true}"
@@ -47,7 +47,7 @@ ALERTS_UPDATE_INTERVAL="${ALERTS_UPDATE_INTERVAL:-900}"
 SOFTWARE_PRESET="${SOFTWARE_PRESET:-faster}"
 SOFTWARE_CRF="${SOFTWARE_CRF:-23}"
 SCALE_ADS_TL="${SCALE_TL:-500}"
-AD_ROTATE_TIMER_TL="${OVERLAYAD_ROTATE_TIMER:-30}" 
+AD_ROTATE_TIMER_TL="${OVERLAYAD_ROTATE_TIMER:-30}"
 SCALE_ADS_TR="${SCALE_TR:-400}"
 TR_SHOW_SECONDS="${TR_SHOW_SECONDS:-20}"
 TR_HIDE_SECONDS="${TR_HIDE_SECONDS:-300}"
@@ -90,7 +90,7 @@ check_rtsp_basic() {
 }
 check_rtsp_robust() {
     if ! check_rtsp_basic; then return 1; fi
-    if timeout 10 ffprobe -v error -rtsp_transport tcp -i "$1" -t 1 -f null - 2>/dev/null; then return 0; else return 1; fi
+    if timeout 10 ffprobe -v error -rtsp_transport tcp -buffer_size 2097152 -i "$1" -t 1 -f null - 2>/dev/null; then return 0; else return 1; fi
 }
 
 # ==============================================================================
@@ -248,10 +248,10 @@ get_mode() { local hr=$(date +%-H); if [ "$hr" -ge "$DAY_START_HOUR" ] && [ "$hr
 # Weather Manager
 if [ "$WEATHER_ENABLED" = "true" ]; then
     (
-        sleep 5 
+        sleep 5
         while true; do
             python3 /weather.py combined "$WEATHER_TEMP"
-            if [ -f "$WEATHER_TEMP" ]; then 
+            if [ -f "$WEATHER_TEMP" ]; then
                 mv -f "$WEATHER_TEMP" "$WEATHER_COMBINED"
                 FLASH_TEMP="${WEATHER_TEMP%.png}_flash.png"
                 if [ -f "$FLASH_TEMP" ]; then mv -f "$FLASH_TEMP" "$WEATHER_COMBINED_FLASH"; else rm -f "$WEATHER_COMBINED_FLASH"; fi
@@ -281,7 +281,14 @@ fi
 #  INPUTS CONFIGURATION (FIX: Split RTSP and Overlays)
 # ==============================================================================
 # We split the inputs so we can re-use the overlays on the BRB screen.
-RTSP_INPUT_OPTS="-thread_queue_size 1024 -rtsp_transport tcp -timeout 8000000 -i $RTSP_SOURCE"
+# RTSP Input Options - Optimized for reliability over low latency
+# - rtsp_transport tcp: Retransmits lost packets (unlike UDP)
+# - buffer_size: 4MB receive buffer for network hiccups
+# - max_delay: Allow up to 500ms delay to reassemble packets
+# - fflags: Generate timestamps, discard corrupt frames cleanly
+# - err_detect: Ignore decode errors instead of failing
+# - thread_queue_size: Large queue for bursty network conditions
+RTSP_INPUT_OPTS="-thread_queue_size 2048 -rtsp_transport tcp -buffer_size 4194304 -max_delay 500000 -fflags +genpts+discardcorrupt -err_detect ignore_err -timeout 8000000 -i $RTSP_SOURCE"
 OVERLAY_INPUTS=""
 
 FILTER_CHAIN="$CAMERA_FILTER"
@@ -292,10 +299,10 @@ add_overlay() {
     local path=$1; local pos=$2; local width=$3; local height=$4
     local coords=""
     case $pos in tl) coords="20:20" ;; tr) coords="main_w-overlay_w-20:20" ;; br) coords="main_w-overlay_w-20:main_h-overlay_h-20" ;; bl) coords="20:main_h-overlay_h-20" ;; esac
-    
+
     # Append to OVERLAY_INPUTS instead of the main string, so we can reuse it
     OVERLAY_INPUTS="$OVERLAY_INPUTS -f concat -safe 0 -stream_loop -1 -i $path"
-    
+
     if [ -n "$height" ]; then scale_cmd="scale=${width}:${height}"; else scale_cmd="scale=${width}:${width}"; fi
     FILTER_CHAIN="${FILTER_CHAIN};[${INPUT_COUNT}:v]${scale_cmd},format=rgba[ovr${INPUT_COUNT}];[${LAST_V}][ovr${INPUT_COUNT}]overlay=${coords}:eof_action=pass:shortest=0[v${INPUT_COUNT}]"
     LAST_V="v$INPUT_COUNT"; INPUT_COUNT=$((INPUT_COUNT+1))
@@ -307,7 +314,7 @@ if [ "$WEATHER_ENABLED" = "true" ]; then add_overlay "$WEATHER_LIST" "br" "900" 
 
 if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
     log "--- Direct YouTube Mode: Single FFmpeg pipeline ---"
-    
+
     run_camera_ffmpeg() {
         local audio_mode="$1"
         if [ "$HARDWARE_ACCEL" = "true" ]; then
@@ -319,7 +326,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             local hw_init=""
             local video_codec="-c:v libx264 -preset $SOFTWARE_PRESET -crf $SOFTWARE_CRF -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60"
         fi
-        
+
         # Combine RTSP Input + Overlay Inputs
         if [ "$audio_mode" = "unmuted" ]; then
             ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
@@ -328,13 +335,13 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         fi
         echo $!
     }
-    
+
     run_fallback_ffmpeg() {
         log "[Fallback] Starting 'We'll Be Right Back' stream (With Overlays)..."
-        
+
         # BRB Input acts as Input 0
         local BRB_INPUT_OPTS="-loop 1 -re -i $FALLBACK_IMAGE"
-        
+
         if [ "$HARDWARE_ACCEL" = "true" ]; then
             local final_filters="${FILTER_CHAIN};[${LAST_V}]scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=nv12[soft_final];[soft_final]hwupload[vfinal]"
             local hw_init="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
@@ -344,7 +351,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             local hw_init=""
             local video_codec="-c:v libx264 -preset $SOFTWARE_PRESET -tune stillimage -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60"
         fi
-        
+
         # Combine BRB Input + Overlay Inputs + Silent Audio (at the end)
         ffmpeg -hide_banner -loglevel warning $hw_init \
             $BRB_INPUT_OPTS $OVERLAY_INPUTS \
@@ -355,12 +362,12 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         echo $!
     }
-    
+
     CURRENT_MODE="normal"
     FFMPEG_PID=""
     LAST_SIZE=0
     FROZEN_COUNT=0
-    
+
     while true; do
         if [ -z "$FFMPEG_PID" ] || ! kill -0 $FFMPEG_PID 2>/dev/null; then
             if [ "$CURRENT_MODE" = "normal" ]; then
@@ -386,11 +393,11 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
             fi
         fi
-        
+
         LOOP_COUNT=0
         while kill -0 $FFMPEG_PID 2>/dev/null; do
             LOOP_COUNT=$((LOOP_COUNT + 1))
-            
+
             # 1. ZOMBIE CHECK (Size-Based) - Only in Normal Mode
             if [ "$CURRENT_MODE" = "normal" ]; then
                 CURRENT_SIZE=$(wc -c < "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)
@@ -412,7 +419,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 NEW_AUDIO=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
                 if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then log "Audio Change"; kill $FFMPEG_PID 2>/dev/null; sleep 2; FFMPEG_PID=""; break; fi
             fi
-            
+
             # 3. Connection Health Check (Every 3s)
             if [ $((LOOP_COUNT % 3)) -eq 0 ]; then
                 if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
@@ -423,22 +430,22 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                    fi
                 fi
                 if [ "$CURRENT_MODE" = "fallback" ]; then
-                   if check_rtsp_basic; then 
+                   if check_rtsp_basic; then
                        log "[Fallback] RTSP Recovered! Killing BRB Stream (PID $FFMPEG_PID) to switch..."
                        kill -9 $FFMPEG_PID 2>/dev/null
                        break
                    fi
                 fi
             fi
-            
+
             # Heartbeat Logging every 10s
             if [ $((LOOP_COUNT % 10)) -eq 0 ] && [ "$CURRENT_MODE" = "normal" ]; then
                 log "[Heartbeat] Monitoring Stream... PID:$FFMPEG_PID Size:$CURRENT_SIZE"
             fi
-            
+
             sleep 1
         done
-        
+
         # FFmpeg Died/Killed Logic
         if [ -n "$FFMPEG_PID" ] && ! kill -0 $FFMPEG_PID 2>/dev/null; then
             wait $FFMPEG_PID 2>/dev/null; EXIT_CODE=$?
