@@ -1,6 +1,7 @@
-# VantageCam Live v2.8.4
+# VantageCam Live v2.8.5
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Docker Build](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml/badge.svg)](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml)
 
 **Open-Source Automated Live Stream Broadcaster with Weather, Smart Alerts & Self-Healing**
 
@@ -19,7 +20,7 @@ Transform a standard security camera feed into a professional broadcast without 
 ## 📋 Table of Contents
 
 - [Key Features](#-key-features)
-- [What's New in v2.8.4](#-whats-new-in-v284)
+- [What's New in v2.8.5](#-whats-new-in-v285)
 - [Getting Started](#-getting-started)
 - [Docker Compose](#-docker-compose)
 - [Direct-to-YouTube Mode](#-direct-to-youtube-mode)
@@ -53,7 +54,8 @@ Transform a standard security camera feed into a professional broadcast without 
 ### Streaming
 - **Direct-to-YouTube Mode** — Single FFmpeg pipeline saves CPU/RAM when no local preview needed
 - **Dynamic Sponsors** — Drag-and-drop logos with automatic Day/Night rotation
-- **Audio Control API** — Remote mute/unmute via HTTP endpoints
+- **Audio Control API** — Remote mute/unmute/music via HTTP endpoints
+- **Music Streaming** — Play background music from MP3 playlist instead of camera audio
 
 ### Reliability *(v2.8+)*
 - **Self-Healing Watchdog** — Auto-detects failures and recovers streams
@@ -66,40 +68,29 @@ Transform a standard security camera feed into a professional broadcast without 
 
 ---
 
-## 🚀 What's New in v2.8.4
+## 🚀 What's New in v2.8.5
 
-### Multi-Alert Stacking (Environment Canada)
-When multiple weather alerts are active for your region, they now display in a stacked layout instead of showing only the first alert:
+### Music Streaming
+Stream background music to your live feed instead of camera audio! Perfect for adding ambiance to your stream.
 
-- **Single alert:** Full-height display (unchanged)
-- **Multiple alerts:** Shared region header + stacked alert rows at half-height
-- Each alert keeps its own color (red/orange/yellow) and timestamp
-- Supports up to 3 simultaneous alerts
+- **API Control** — Enable via `POST /audio/music` endpoint
+- **Playlist Support** — Place multiple MP3 files in `/config/music/` folder
+- **Auto-Loop** — Plays through all songs (1, 2, 3... N) then loops back to start
+- **Graceful Fallback** — Falls back to muted if no music files found
 
+```bash
+# Enable music mode
+curl -X POST -H "X-API-Key: KEY" http://IP:9998/audio/music
+
+# Check current audio mode
+curl -H "X-API-Key: KEY" http://IP:9998/audio/status
+# Returns: {"audio": "music", "muted": false, "music": true}
 ```
-┌─────────────────────────────────────────────┐
-│     Innisfil - New Tecumseth - Angus        │  ← Shared region
-├─────────────────────────────────────────────┤
-│ ⚠ ORANGE WARNING - SNOW SQUALL       12:32 │  ← Alert 1
-├─────────────────────────────────────────────┤
-│ ⚠ YELLOW WARNING - WIND              12:53 │  ← Alert 2
-└─────────────────────────────────────────────┘
-```
 
-### Real-Time Weather Visibility
-Fixed visibility readings being inaccurate during rapidly changing conditions. Now uses OpenMeteo's real-time observation data instead of hourly forecasts.
-
-### RTSP Stream Reliability
-Major improvements for challenging network conditions (high winds, WiFi interference, congestion):
-
-| Improvement | Benefit |
-|:------------|:--------|
-| 4MB receive buffer | Absorbs network hiccups |
-| 500ms max delay | Time to reassemble out-of-order packets |
-| Discard corrupt frames | Clean recovery instead of errors |
-| Ignore decode errors | Continue streaming through glitches |
-
-**Result:** Eliminates `RTP: bad cseq` and `Could not find ref with POC` errors. Smoother video with ~300-500ms additional latency (negligible for live streams).
+### Automated Docker Builds
+- GitHub Actions workflow now automatically builds and pushes Docker images
+- Images available at `ghcr.io/mcgeaverbeaver/vantagecamlive:latest`
+- Separate ARM64 builds available (`:latest-arm64`)
 
 ---
 
@@ -124,9 +115,11 @@ Create a folder on your host for persistent data. The container auto-creates sub
 │   └── topright/
 │       ├── DAY/
 │       └── NIGHT/
+├── music/               # MP3 files for music streaming mode
 ├── weather_icons/       # Auto-downloaded weather icons
 ├── watchdog.log         # Self-healing activity log
 ├── watchdog_state.json  # Persistent watchdog state
+├── audio_mode           # Current audio: "muted", "unmuted", or "music"
 └── stream_mode          # Current mode: "normal" or "fallback"
 ```
 
@@ -563,8 +556,25 @@ Control stream audio via HTTP:
 | Status | `curl -H "X-API-Key: KEY" http://IP:9998/audio/status` |
 | Unmute | `curl -X POST -H "X-API-Key: KEY" http://IP:9998/audio/unmute` |
 | Mute | `curl -X POST -H "X-API-Key: KEY" http://IP:9998/audio/mute` |
+| Music | `curl -X POST -H "X-API-Key: KEY" http://IP:9998/audio/music` |
 | Toggle | `curl -X POST -H "X-API-Key: KEY" http://IP:9998/audio/toggle` |
 | Health | `curl http://IP:9998/health` |
+
+### Audio Modes
+
+| Mode | Description |
+|:-----|:------------|
+| `muted` | Silent audio (default) |
+| `unmuted` | Camera's original audio |
+| `music` | Stream MP3 playlist from `/config/music/` |
+
+### Music Streaming Setup
+
+1. Create the music folder: `/config/music/`
+2. Add MP3 files to the folder
+3. Enable music mode via API: `POST /audio/music`
+
+The playlist plays all MP3 files in alphabetical order, then loops back to the beginning. Switching to music mode while no MP3 files exist will fall back to muted.
 
 > Set `AUDIO_API_KEY` to require authentication. Health endpoint always works without auth.
 
@@ -645,6 +655,18 @@ Control stream audio via HTTP:
 ---
 
 ## 📜 Changelog
+
+### v2.8.5 - Music Streaming & CI/CD
+
+**New Features:**
+- **Music Streaming Mode** — Stream background music from `/config/music/` folder instead of camera audio. Playlist loops through all MP3 files continuously.
+- **Music API Endpoint** — New `POST /audio/music` endpoint to enable music mode via HTTP API.
+- **GitHub Actions CI/CD** — Automated Docker builds on push to main. Images published to `ghcr.io/mcgeaverbeaver/vantagecamlive:latest`.
+- **ARM64 Support** — Separate ARM64 builds available (`:latest-arm64`) for Raspberry Pi and ARM servers.
+
+**Improvements:**
+- Audio status API now includes `music` field in response
+- Graceful fallback to muted mode if no music files found
 
 ### v2.8.4 - Multi-Alert Stacking & RTSP Reliability
 
