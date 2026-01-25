@@ -17,7 +17,7 @@ def get_audio_mode():
     try:
         with open(CONTROL_FILE, 'r') as f:
             mode = f.read().strip()
-            return mode if mode in ['muted', 'unmuted'] else 'muted'
+            return mode if mode in ['muted', 'unmuted', 'music'] else 'muted'
     except FileNotFoundError:
         return 'muted'
 
@@ -71,7 +71,8 @@ class AudioControlHandler(BaseHTTPRequestHandler):
             mode = get_audio_mode()
             self.send_json({
                 'audio': mode,
-                'muted': mode == 'muted'
+                'muted': mode == 'muted',
+                'music': mode == 'music'
             })
         else:
             self.send_json({'error': 'Not found'}, 404)
@@ -83,15 +84,18 @@ class AudioControlHandler(BaseHTTPRequestHandler):
 
         if self.path == '/audio/mute':
             set_audio_mode('muted')
-            self.send_json({'audio': 'muted', 'muted': True})
+            self.send_json({'audio': 'muted', 'muted': True, 'music': False})
         elif self.path == '/audio/unmute':
             set_audio_mode('unmuted')
-            self.send_json({'audio': 'unmuted', 'muted': False})
+            self.send_json({'audio': 'unmuted', 'muted': False, 'music': False})
         elif self.path == '/audio/toggle':
             current = get_audio_mode()
             new_mode = 'unmuted' if current == 'muted' else 'muted'
             set_audio_mode(new_mode)
-            self.send_json({'audio': new_mode, 'muted': new_mode == 'muted'})
+            self.send_json({'audio': new_mode, 'muted': new_mode == 'muted', 'music': False})
+        elif self.path == '/audio/music':
+            set_audio_mode('music')
+            self.send_json({'audio': 'music', 'muted': False, 'music': True})
         else:
             self.send_json({'error': 'Not found'}, 404)
 

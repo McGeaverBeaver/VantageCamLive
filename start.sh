@@ -74,6 +74,8 @@ AD_PLAYLIST_TR="$WORKDIR/ad_playlist_tr.txt"
 FALLBACK_ENABLED="${FALLBACK_ENABLED:-true}"
 FALLBACK_IMAGE="$WORKDIR/fallback.png"
 STREAM_MODE_FILE="$WORKDIR/stream_mode"
+MUSIC_DIR="$WORKDIR/music"
+MUSIC_PLAYLIST="$WORKDIR/music_playlist.txt"
 
 # --- HEARTBEAT MONITOR CONFIG ---
 FFMPEG_PROGRESS_LOG="true"
@@ -134,6 +136,28 @@ EOF
     else
         echo -e "file '$WEATHER_COMBINED'\nduration 10\nfile '$WEATHER_COMBINED'" > "$WEATHER_LIST"
     fi
+}
+
+generate_music_playlist() {
+    mkdir -p "$MUSIC_DIR"
+    local music_files=()
+    shopt -s nullglob nocaseglob
+    for f in "$MUSIC_DIR"/*.mp3 "$MUSIC_DIR"/*.MP3; do
+        music_files+=("$f")
+    done
+    shopt -u nullglob nocaseglob
+
+    if [ ${#music_files[@]} -eq 0 ]; then
+        log "[Music] No MP3 files found in $MUSIC_DIR"
+        return 1
+    fi
+
+    log "[Music] Found ${#music_files[@]} MP3 file(s) in playlist"
+    > "$MUSIC_PLAYLIST"
+    for f in "${music_files[@]}"; do
+        echo "file '$f'" >> "$MUSIC_PLAYLIST"
+    done
+    return 0
 }
 
 # ==============================================================================
@@ -330,6 +354,9 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         # Combine RTSP Input + Overlay Inputs
         if [ "$audio_mode" = "unmuted" ]; then
             ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
+        elif [ "$audio_mode" = "music" ]; then
+            # Music mode: stream from playlist, loop infinitely with -stream_loop -1
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         else
             ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         fi
@@ -374,6 +401,13 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 RETRY_COUNT=0
                 while [ $RETRY_COUNT -lt 3 ]; do
                     AUDIO_MODE=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
+                    # Generate music playlist if music mode is enabled
+                    if [ "$AUDIO_MODE" = "music" ]; then
+                        if ! generate_music_playlist; then
+                            log "[Music] No music files available, falling back to muted"
+                            AUDIO_MODE="muted"
+                        fi
+                    fi
                     rm -f "$FFMPEG_PROGRESS_FILE"; touch "$FFMPEG_PROGRESS_FILE"; LAST_SIZE=0; FROZEN_COUNT=0
                     FFMPEG_PID=$(run_camera_ffmpeg "$AUDIO_MODE")
                     sleep 2
