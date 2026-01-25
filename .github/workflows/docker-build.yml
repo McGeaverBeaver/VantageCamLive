@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - master
+      - 'claude/**'
     tags:
       - 'v*'
   pull_request:
