@@ -143,33 +143,41 @@ sanitize_music_files() {
     mkdir -p "$MUSIC_DIR"
     local renamed_count=0
     
+    # First, fix any files that got broken with trailing underscore
     shopt -s nullglob nocaseglob
+    for f in "$MUSIC_DIR"/*.mp3_; do
+        local newname="${f%_}"
+        if [ ! -f "$newname" ]; then
+            mv "$f" "$newname" 2>/dev/null && log "[Music] Fixed: removed trailing underscore from '$(basename "$f")'"
+        fi
+    done
+    
     for f in "$MUSIC_DIR"/*.mp3; do
         local dir=$(dirname "$f")
         local base=$(basename "$f")
         
-        # Create safe filename using tr - replace problematic chars with underscore
-        # Keep: a-z A-Z 0-9 space hyphen underscore dot
-        local safe=$(echo "$base" | tr "'\"\`" "_" | tr -c 'a-zA-Z0-9 ._-' '_' | tr -s '_')
-        
-        # Clean up: remove trailing underscore before .mp3
-        safe=$(echo "$safe" | sed 's/_\.mp3$/.mp3/i')
-        
-        if [ "$base" != "$safe" ]; then
-            local newpath="$dir/$safe"
-            # Handle collision - add number if file exists
-            local counter=1
-            while [ -f "$newpath" ] && [ "$f" != "$newpath" ]; do
-                safe="${safe%.mp3}_${counter}.mp3"
-                newpath="$dir/$safe"
-                counter=$((counter + 1))
-            done
+        # Only rename if filename contains apostrophe or ampersand (the problem chars)
+        if echo "$base" | grep -qE "['\"\`&]"; then
+            # Replace only the problematic characters
+            local safe=$(printf '%s' "$base" | tr "'\"\`&" "_")
+            safe=$(echo "$safe" | tr -s '_')
             
-            if [ "$f" != "$newpath" ]; then
-                mv "$f" "$newpath" 2>/dev/null && {
-                    log "[Music] Renamed: '$base' -> '$safe'"
-                    renamed_count=$((renamed_count + 1))
-                }
+            if [ "$base" != "$safe" ]; then
+                local newpath="$dir/$safe"
+                # Handle collision
+                local counter=1
+                while [ -f "$newpath" ] && [ "$f" != "$newpath" ]; do
+                    safe="${safe%.mp3}_${counter}.mp3"
+                    newpath="$dir/$safe"
+                    counter=$((counter + 1))
+                done
+                
+                if [ "$f" != "$newpath" ]; then
+                    mv "$f" "$newpath" 2>/dev/null && {
+                        log "[Music] Renamed: '$base' -> '$safe'"
+                        renamed_count=$((renamed_count + 1))
+                    }
+                fi
             fi
         fi
     done
@@ -182,7 +190,6 @@ sanitize_music_files() {
 
 generate_music_playlist() {
     mkdir -p "$MUSIC_DIR"
-    
     # Sanitize filenames first
     sanitize_music_files
     
