@@ -1,9 +1,10 @@
-FROM alpine:3.19
-
-# Build arguments (must be before first FROM)
+# Global build arguments (must be before any FROM)
 ARG MTX_VERSION=v1.6.0
 
+# MediaMTX builder stage
 FROM bluenviron/mediamtx:${MTX_VERSION} AS mediamtx
+
+# Main application stage
 FROM alpine:3.19
 
 ARG INCLUDE_INTEL=true
