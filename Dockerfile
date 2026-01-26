@@ -50,18 +50,8 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     geopy \
     aiohttp
 
-# 4. Install MediaMTX
-# Map buildx TARGETARCH to MediaMTX archive naming (amd64, arm64, armv7)
-RUN set -e; \
-        MTX_ARCH="${ARCH}"; \
-        case "${TARGETARCH:-$ARCH}" in \
-            amd64) MTX_ARCH=amd64 ;; \
-            arm64) MTX_ARCH=arm64 ;; \
-            arm|armv7|armv7l|armhf|armv6) MTX_ARCH=armv7 ;; \
-        esac; \
-        wget -q -O mediamtx.tar.gz "https://github.com/bluenviron/mediamtx/releases/download/${MTX_VERSION}/mediamtx_${MTX_VERSION}_linux_${MTX_ARCH}.tar.gz" \
-        && tar -xzf mediamtx.tar.gz -C /usr/local/bin/ \
-        && rm mediamtx.tar.gz
+# 4. Install MediaMTX from official multi-arch image
+COPY --from=bluenviron/mediamtx:${MTX_VERSION} /mediamtx /usr/local/bin/mediamtx
 
 # 5. Setup Entrypoint and Scripts
 COPY start.sh /start.sh
