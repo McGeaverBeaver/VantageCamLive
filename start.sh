@@ -377,16 +377,10 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         if [ "$audio_mode" = "unmuted" ]; then
             ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         elif [ "$audio_mode" = "music" ]; then
-            # Music mode: stream from playlist, loop infinitely with -stream_loop -1
+            # Music mode: stream from playlist with detailed logging to file
             log "[Music] Starting stream with playlist: $MUSIC_PLAYLIST"
             log "[Music] Playlist has $(wc -l < "$MUSIC_PLAYLIST") entries"
-            # Use info loglevel for music mode to capture concat demuxer details
-            ffmpeg -hide_banner -loglevel info $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -thread_queue_size 4096 -re -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 -af "aresample=async=1:first_pts=0" $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>&1 | while IFS= read -r line; do
-                # Log concat demuxer messages to track which song is playing
-                if echo "$line" | grep -qE "Opening|Impossible|Error during|Error retrieving"; then
-                    log "[Music-FFmpeg] $line"
-                fi
-            done &
+            ffmpeg -hide_banner -loglevel info $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -thread_queue_size 4096 -re -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 -af "aresample=async=1:first_pts=0" $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>/config/music_ffmpeg.log &
         else
             ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         fi
