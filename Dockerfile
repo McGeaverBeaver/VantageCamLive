@@ -5,6 +5,8 @@ ARG INCLUDE_INTEL=true
 ARG ARCH=amd64
 ARG MTX_VERSION=v1.6.0
 ARG VERSION=2.8.2
+ARG TARGETOS
+ARG TARGETARCH
 
 # Image metadata
 LABEL maintainer="McGeaverBeaver"
@@ -49,10 +51,17 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     aiohttp
 
 # 4. Install MediaMTX
-RUN wget -q -O mediamtx.tar.gz \
-    https://github.com/bluenviron/mediamtx/releases/download/${MTX_VERSION}/mediamtx_${MTX_VERSION}_linux_${ARCH}.tar.gz \
-    && tar -xzf mediamtx.tar.gz -C /usr/local/bin/ \
-    && rm mediamtx.tar.gz
+# Map buildx TARGETARCH to MediaMTX archive naming (amd64, arm64, armv7)
+RUN set -e; \
+        MTX_ARCH="${ARCH}"; \
+        case "${TARGETARCH:-$ARCH}" in \
+            amd64) MTX_ARCH=amd64 ;; \
+            arm64) MTX_ARCH=arm64 ;; \
+            arm|armv7|armv7l|armhf|armv6) MTX_ARCH=armv7 ;; \
+        esac; \
+        wget -q -O mediamtx.tar.gz "https://github.com/bluenviron/mediamtx/releases/download/${MTX_VERSION}/mediamtx_${MTX_VERSION}_linux_${MTX_ARCH}.tar.gz" \
+        && tar -xzf mediamtx.tar.gz -C /usr/local/bin/ \
+        && rm mediamtx.tar.gz
 
 # 5. Setup Entrypoint and Scripts
 COPY start.sh /start.sh
