@@ -148,9 +148,12 @@ sanitize_music_files() {
         local dir=$(dirname "$f")
         local base=$(basename "$f")
         
-        # Create safe filename: keep only alphanumeric, spaces, hyphens, underscores, dots
-        # Replace problematic chars with underscore
-        local safe=$(echo "$base" | sed "s/['\"\`\$\!\@\#\%\^\&\*\(\)\[\]\{\}\;\:\<\>\?\|\\\\]/_/g" | sed 's/__*/_/g' | sed 's/_ \.mp3$/.mp3/i')
+        # Create safe filename using tr - replace problematic chars with underscore
+        # Keep: a-z A-Z 0-9 space hyphen underscore dot
+        local safe=$(echo "$base" | tr "'\"\`" "_" | tr -c 'a-zA-Z0-9 ._-' '_' | tr -s '_')
+        
+        # Clean up: remove trailing underscore before .mp3
+        safe=$(echo "$safe" | sed 's/_\.mp3$/.mp3/i')
         
         if [ "$base" != "$safe" ]; then
             local newpath="$dir/$safe"
