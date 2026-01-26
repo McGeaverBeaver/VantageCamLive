@@ -1,8 +1,5 @@
-# Global build arguments (must be before any FROM)
+# Global build arguments
 ARG MTX_VERSION=v1.6.0
-
-# MediaMTX builder stage
-FROM bluenviron/mediamtx:${MTX_VERSION} AS mediamtx
 
 # Main application stage
 FROM alpine:3.19
@@ -53,8 +50,11 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     geopy \
     aiohttp
 
-# 4. Install MediaMTX from builder stage
-COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
+# 4. Install MediaMTX (amd64 only - Intel builds)
+RUN wget -q -O mediamtx.tar.gz \
+    https://github.com/bluenviron/mediamtx/releases/download/${MTX_VERSION}/mediamtx_${MTX_VERSION}_linux_amd64.tar.gz \
+    && tar -xzf mediamtx.tar.gz -C /usr/local/bin/ \
+    && rm mediamtx.tar.gz
 
 # 5. Setup Entrypoint and Scripts
 COPY start.sh /start.sh
