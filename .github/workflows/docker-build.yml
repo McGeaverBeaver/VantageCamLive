@@ -71,19 +71,4 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build and push Docker image (arm64, no Intel)
-        if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/arm64
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest-arm64
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ github.sha }}-arm64
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            ARCH=arm64
-            INCLUDE_INTEL=false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # Arm64 build disabled per request (Intel-only)
