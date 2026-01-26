@@ -88,9 +88,9 @@ curl -H "X-API-Key: KEY" http://IP:9998/audio/status
 ```
 
 ### Automated Docker Builds
-- GitHub Actions workflow now automatically builds and pushes Docker images
+- GitHub Actions workflow builds and pushes Docker images
 - Images available at `ghcr.io/mcgeaverbeaver/vantagecamlive:latest`
-- Separate ARM64 builds available (`:latest-arm64`)
+- **Intel-only** — Optimized for Intel QuickSync hardware acceleration (no software encoding variant)
 
 ---
 
@@ -194,27 +194,15 @@ services:
     restart: unless-stopped
 ```
 
-### Software Encoding (No GPU)
+### Software Encoding Option (via Environment Variable)
+
+If you don't have Intel hardware, you can disable hardware acceleration:
 
 ```yaml
-version: "3"
-services:
-  vantagecam:
-    image: ghcr.io/mcgeaverbeaver/vantagecamlive:latest
-    container_name: vantagecam
-    environment:
-      - PUID=99
-      - PGID=100
-      - RTSP_SOURCE=rtsp://user:pass@192.168.1.50:554/stream
-      - HARDWARE_ACCEL=false
-      - SOFTWARE_PRESET=faster
-      - SOFTWARE_CRF=23
-      # ... (same as above)
-    volumes:
-      - /mnt/user/appdata/vantagecam:/config
-    ports:
-      - 9998:9998
-    restart: unless-stopped
+environment:
+  - HARDWARE_ACCEL=false
+  - SOFTWARE_PRESET=faster
+  - SOFTWARE_CRF=23
 ```
 
 > ⚠️ **Note:** Software encoding uses significantly more CPU. Expect 2-4 cores at moderate-high usage for 1440p.
