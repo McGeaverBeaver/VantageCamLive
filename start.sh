@@ -138,8 +138,51 @@ EOF
     fi
 }
 
+# Sanitize music filenames - remove problematic characters that break FFmpeg concat
+sanitize_music_files() {
+    mkdir -p "$MUSIC_DIR"
+    local renamed_count=0
+    
+    shopt -s nullglob nocaseglob
+    for f in "$MUSIC_DIR"/*.mp3; do
+        local dir=$(dirname "$f")
+        local base=$(basename "$f")
+        
+        # Create safe filename: keep only alphanumeric, spaces, hyphens, underscores, dots
+        # Replace problematic chars with underscore
+        local safe=$(echo "$base" | sed "s/['\"\`\$\!\@\#\%\^\&\*\(\)\[\]\{\}\;\:\<\>\?\|\\\\]/_/g" | sed 's/__*/_/g' | sed 's/_ \.mp3$/.mp3/i')
+        
+        if [ "$base" != "$safe" ]; then
+            local newpath="$dir/$safe"
+            # Handle collision - add number if file exists
+            local counter=1
+            while [ -f "$newpath" ] && [ "$f" != "$newpath" ]; do
+                safe="${safe%.mp3}_${counter}.mp3"
+                newpath="$dir/$safe"
+                counter=$((counter + 1))
+            done
+            
+            if [ "$f" != "$newpath" ]; then
+                mv "$f" "$newpath" 2>/dev/null && {
+                    log "[Music] Renamed: '$base' -> '$safe'"
+                    renamed_count=$((renamed_count + 1))
+                }
+            fi
+        fi
+    done
+    shopt -u nullglob nocaseglob
+    
+    if [ $renamed_count -gt 0 ]; then
+        log "[Music] Sanitized $renamed_count file(s) with problematic characters"
+    fi
+}
+
 generate_music_playlist() {
     mkdir -p "$MUSIC_DIR"
+    
+    # Sanitize filenames first
+    sanitize_music_files
+    
     local music_files=()
     shopt -s nullglob nocaseglob
     for f in "$MUSIC_DIR"/*.mp3; do
