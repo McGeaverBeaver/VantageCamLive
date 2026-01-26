@@ -4,6 +4,8 @@ ARG MTX_VERSION=v1.15.6
 # Main application stage
 FROM alpine:3.19
 
+# Re-declare build args inside the stage so they are in scope
+ARG MTX_VERSION
 ARG INCLUDE_INTEL=true
 ARG ARCH=amd64
 ARG VERSION=2.8.2
