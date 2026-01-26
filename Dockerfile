@@ -50,11 +50,10 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     geopy \
     aiohttp
 
-# 4. Install MediaMTX (amd64 only - Intel builds)
-RUN wget -q -O mediamtx.tar.gz \
-    https://github.com/bluenviron/mediamtx/releases/download/${MTX_VERSION}/mediamtx_${MTX_VERSION}_linux_amd64.tar.gz \
-    && tar -xzf mediamtx.tar.gz -C /usr/local/bin/ \
-    && rm mediamtx.tar.gz
+# 4. Install MediaMTX (Optional - only needed if ENABLE_LOCAL_STREAM=true)
+# MediaMTX releases can be unreliable; users can manually install if needed
+# If you need local RTSP streaming, visit: https://github.com/bluenviron/mediamtx/releases
+# and run: wget -O mediamtx.tar.gz <release_url> && tar -xzf mediamtx.tar.gz -C /usr/local/bin/
 
 # 5. Setup Entrypoint and Scripts
 COPY start.sh /start.sh
