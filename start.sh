@@ -159,8 +159,8 @@ generate_music_playlist() {
     for f in "${music_files[@]}"; do
         # Validate file exists and is readable
         if [ -r "$f" ]; then
-            # Use printf for proper escaping of single quotes in filename
-            printf "file '%s'\n" "${f//\'/\'\\\'\'}">" >> "$MUSIC_PLAYLIST"
+            # Simple approach - just echo the full path
+            echo "file '$f'" >> "$MUSIC_PLAYLIST"
             valid_count=$((valid_count + 1))
         else
             invalid_files+=("$(basename "$f")")
