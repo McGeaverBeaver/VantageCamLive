@@ -157,6 +157,13 @@ generate_music_playlist() {
     for f in "${music_files[@]}"; do
         echo "file '$f'" >> "$MUSIC_PLAYLIST"
     done
+    
+    # Log playlist content for debugging (just first 5 entries)
+    log "[Music] Playlist entries (first 5):"
+    head -n 5 "$MUSIC_PLAYLIST" | while read -r line; do
+        log "[Music]   $line"
+    done
+    
     return 0
 }
 
@@ -355,6 +362,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         if [ "$audio_mode" = "unmuted" ]; then
             ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         elif [ "$audio_mode" = "music" ]; then
+            log "[Music] Starting music stream with concat playlist"
             # Music mode: stream from playlist, loop infinitely with -stream_loop -1
             ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -thread_queue_size 4096 -re -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 -af "aresample=async=1:first_pts=0" $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         else
