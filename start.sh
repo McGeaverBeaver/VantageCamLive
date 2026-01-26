@@ -141,9 +141,6 @@ EOF
 generate_music_playlist() {
     mkdir -p "$MUSIC_DIR"
     local music_files=()
-    local valid_count=0
-    local invalid_files=()
-    
     shopt -s nullglob nocaseglob
     for f in "$MUSIC_DIR"/*.mp3; do
         music_files+=("$f")
@@ -155,30 +152,11 @@ generate_music_playlist() {
         return 1
     fi
 
+    log "[Music] Found ${#music_files[@]} MP3 file(s) in playlist"
     > "$MUSIC_PLAYLIST"
     for f in "${music_files[@]}"; do
-        # Validate file exists and is readable
-        if [ -r "$f" ]; then
-            # Simple approach - just echo the full path
-            echo "file '$f'" >> "$MUSIC_PLAYLIST"
-            valid_count=$((valid_count + 1))
-        else
-            invalid_files+=("$(basename "$f")")
-        fi
+        echo "file '$f'" >> "$MUSIC_PLAYLIST"
     done
-
-    if [ $valid_count -eq 0 ]; then
-        log "[Music] ERROR: No readable MP3 files found in $MUSIC_DIR"
-        return 1
-    fi
-
-    log "[Music] Generated playlist with ${valid_count} valid MP3 file(s)"
-    if [ ${#invalid_files[@]} -gt 0 ]; then
-        log "[Music] WARNING: ${#invalid_files[@]} unreadable files skipped: ${invalid_files[*]}"
-    fi
-    
-    # Log first 3 songs for verification
-    log "[Music] First songs: $(head -n 3 "$MUSIC_PLAYLIST" | sed "s|file '||g" | sed "s|'||g" | sed "s|.*/||g" | tr '\n' ', ' | sed 's/, $//')"
     return 0
 }
 
@@ -377,10 +355,8 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         if [ "$audio_mode" = "unmuted" ]; then
             ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         elif [ "$audio_mode" = "music" ]; then
-            # Music mode: stream from playlist with detailed logging to file
-            log "[Music] Starting stream with playlist: $MUSIC_PLAYLIST"
-            log "[Music] Playlist has $(wc -l < "$MUSIC_PLAYLIST") entries"
-            ffmpeg -hide_banner -loglevel info $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -thread_queue_size 4096 -re -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 -af "aresample=async=1:first_pts=0" $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>/config/music_ffmpeg.log &
+            # Music mode: stream from playlist, loop infinitely with -stream_loop -1
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -thread_queue_size 4096 -re -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 -af "aresample=async=1:first_pts=0" $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         else
             ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         fi
