@@ -8,6 +8,18 @@ ARG VERSION=2.8.2
 ARG TARGETOS
 ARG TARGETARCH
 
+# MediaMTX builder stage (to workaround COPY --from variable expansion limitation)
+FROM bluenviron/mediamtx:${MTX_VERSION} AS mediamtx
+
+# Main builder stage
+FROM alpine:3.19
+
+# Re-declare ARGs for main stage (they don't inherit from builder stage)
+ARG INCLUDE_INTEL=true
+ARG ARCH=amd64
+ARG MTX_VERSION=v1.6.0
+ARG VERSION=2.8.2
+
 # Image metadata
 LABEL maintainer="McGeaverBeaver"
 LABEL version="${VERSION}"
@@ -50,8 +62,8 @@ RUN pip3 install --break-system-packages --no-cache-dir \
     geopy \
     aiohttp
 
-# 4. Install MediaMTX from official multi-arch image
-COPY --from=bluenviron/mediamtx:${MTX_VERSION} /mediamtx /usr/local/bin/mediamtx
+# 4. Install MediaMTX from builder stage
+COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
 
 # 5. Setup Entrypoint and Scripts
 COPY start.sh /start.sh
