@@ -70,6 +70,11 @@ Transform a standard security camera feed into a professional broadcast without 
 
 ## 🚀 What's New in v2.8.5
 
+### Latest Patch Highlights (Jan 27, 2026)
+- **Music filename auto-fix**: Sanitizes problem characters (quotes/ampersands) on startup so bad names can’t freeze the concat demuxer.
+- **Frame-based zombie detection**: If FFmpeg stays alive but frame count stops advancing (e.g., music demux errors), the watchdog now force-restarts to unfreeze the stream.
+- **Safer recovery**: BRB fallback still keeps YouTube alive while music restarts.
+
 ### Music Streaming
 Stream background music to your live feed instead of camera audio! Perfect for adding ambiance to your stream.
 
