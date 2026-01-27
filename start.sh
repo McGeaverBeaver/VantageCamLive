@@ -402,7 +402,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
     run_camera_ffmpeg() {
         local audio_mode="$1"
         if [ "$HARDWARE_ACCEL" = "true" ]; then
-            local final_filters="${FILTER_CHAIN};[${LAST_V}]scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=yuv420p,setrange=tv,colorspace=bt709[soft_final];[soft_final]format=nv12,hwupload[vfinal]"
+            local final_filters="${FILTER_CHAIN};[${LAST_V}]scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=nv12[soft_final];[soft_final]hwupload[vfinal]"
             local hw_init="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
             local video_codec="-c:v h264_vaapi -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60"
         else
@@ -431,11 +431,11 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         local BRB_INPUT_OPTS="-loop 1 -re -i $FALLBACK_IMAGE"
 
         if [ "$HARDWARE_ACCEL" = "true" ]; then
-            local final_filters="${FILTER_CHAIN};[${LAST_V}]scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=yuv420p,setrange=tv,colorspace=bt709[soft_final];[soft_final]format=nv12,hwupload[vfinal]"
+            local final_filters="${FILTER_CHAIN};[${LAST_V}]scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=nv12[soft_final];[soft_final]hwupload[vfinal]"
             local hw_init="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
             local video_codec="-c:v h264_vaapi -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60"
         else
-            local final_filters="${FILTER_CHAIN};[${LAST_V}]scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=yuv420p,setrange=tv,colorspace=bt709[vfinal]"
+            local final_filters="${FILTER_CHAIN};[${LAST_V}]scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=yuv420p[vfinal]"
             local hw_init=""
             local video_codec="-c:v libx264 -preset $SOFTWARE_PRESET -tune stillimage -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60"
         fi
