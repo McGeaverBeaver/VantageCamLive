@@ -507,9 +507,11 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
                 sleep 0.5  # Let FFmpeg init complete before logging
                 if [ "$AUDIO_MODE" = "music" ]; then
-                    log "FFmpeg started (PID: $FFMPEG_PID) - Music mode with concat playlist"
+                    log "FFmpeg started (PID: $FFMPEG_PID) - Music mode"
+                elif [ "$AUDIO_MODE" = "unmuted" ]; then
+                    log "FFmpeg started (PID: $FFMPEG_PID) - Audio unmuted"
                 else
-                    log "FFmpeg started (PID: $FFMPEG_PID)"
+                    log "FFmpeg started (PID: $FFMPEG_PID) - Muted"
                 fi
             else
                 log "[Fallback] Starting 'We'll Be Right Back' stream (With Overlays)..."
