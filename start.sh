@@ -519,19 +519,27 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 fi
                 
                 # 1b. FRAME-BASED ZOMBIE CHECK - Catch concat demuxer failures
-                # If size grows but frame count stays stuck, the audio stream died
-                CURRENT_FRAME=$(grep "^frame=" "$FFMPEG_PROGRESS_FILE" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' ' || echo 0)
-                if [ -n "$CURRENT_FRAME" ] && [ "$CURRENT_FRAME" -eq "$LAST_FRAME" ] 2>/dev/null; then
-                    FRAME_STUCK_COUNT=$((FRAME_STUCK_COUNT + 1))
-                    # After 60 seconds of no frame progress (but file still growing), kill it
-                    if [ $FRAME_STUCK_COUNT -ge 60 ]; then
-                        log "[ERROR] FFmpeg ZOMBIE (frame stuck at $CURRENT_FRAME for 60s, likely concat error). Killing..."
-                        kill -9 $FFMPEG_PID 2>/dev/null
-                        break
+                # Parse frame count robustly (handle spaces, empty values)
+                CURRENT_FRAME=$(grep -oP 'frame=\s*\K\d+' "$FFMPEG_PROGRESS_FILE" 2>/dev/null | tail -1)
+                CURRENT_FRAME=${CURRENT_FRAME:-0}
+                
+                # Only start checking after initial startup grace period (30s = 30 loops)
+                if [ $LOOP_COUNT -gt 30 ]; then
+                    if [ "$CURRENT_FRAME" -eq "$LAST_FRAME" ] 2>/dev/null; then
+                        FRAME_STUCK_COUNT=$((FRAME_STUCK_COUNT + 1))
+                        # After 60 seconds of no frame progress, kill it
+                        if [ $FRAME_STUCK_COUNT -ge 60 ]; then
+                            log "[ERROR] FFmpeg ZOMBIE (frame stuck at $CURRENT_FRAME for 60s). Killing PID $FFMPEG_PID..."
+                            kill -9 $FFMPEG_PID 2>/dev/null
+                            break
+                        fi
+                    else
+                        FRAME_STUCK_COUNT=0
+                        LAST_FRAME=$CURRENT_FRAME
                     fi
                 else
-                    FRAME_STUCK_COUNT=0
-                    LAST_FRAME=${CURRENT_FRAME:-0}
+                    # During grace period, just track current frame
+                    LAST_FRAME=$CURRENT_FRAME
                 fi
             fi
 
@@ -561,7 +569,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 
             # Heartbeat Logging every 10s
             if [ $((LOOP_COUNT % 10)) -eq 0 ] && [ "$CURRENT_MODE" = "normal" ]; then
-                log "[Heartbeat] Monitoring Stream... PID:$FFMPEG_PID Size:$CURRENT_SIZE"
+                log "[Heartbeat] PID:$FFMPEG_PID Size:$CURRENT_SIZE Frame:$CURRENT_FRAME Stuck:$FRAME_STUCK_COUNT Mode:$AUDIO_MODE"
             fi
 
             sleep 1
