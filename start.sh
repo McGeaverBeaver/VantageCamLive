@@ -80,9 +80,10 @@ MUSIC_PLAYLIST="$WORKDIR/music_playlist.txt"
 # --- HEARTBEAT MONITOR CONFIG ---
 FFMPEG_PROGRESS_LOG="true"
 FFMPEG_PROGRESS_FILE="$WORKDIR/ffmpeg_progress.txt"
+FFMPEG_ERROR_LOG="$WORKDIR/ffmpeg_error.log"
 FFMPEG_PROGRESS_ARG="-progress $FFMPEG_PROGRESS_FILE"
-rm -f "$FFMPEG_PROGRESS_FILE"
-touch "$FFMPEG_PROGRESS_FILE"
+rm -f "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"
+touch "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"
 
 # ==============================================================================
 #  HEALTH CHECK FUNCTIONS
@@ -419,7 +420,8 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             local vol_pct=$(cat /config/music_volume 2>/dev/null || echo 50)
             local vol_dec=$(awk "BEGIN {printf \"%.2f\", $vol_pct/100}")
             # Music mode: stream from playlist, loop infinitely with -stream_loop -1
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -thread_queue_size 4096 -re -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 -af "volume=${vol_dec},aresample=async=1:first_pts=0" $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
+            # Redirect stderr to error log for concat error monitoring
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -thread_queue_size 4096 -re -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 -af "volume=${vol_dec},aresample=async=1:first_pts=0" $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>> "$FFMPEG_ERROR_LOG" &
         else
             ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         fi
@@ -453,10 +455,9 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 
     CURRENT_MODE="normal"
     FFMPEG_PID=""
+    ERROR_MONITOR_PID=""
     LAST_SIZE=0
     FROZEN_COUNT=0
-    LAST_FRAME=0
-    FRAME_STUCK_COUNT=0
 
     while true; do
         if [ -z "$FFMPEG_PID" ] || ! kill -0 $FFMPEG_PID 2>/dev/null; then
@@ -471,8 +472,23 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                             AUDIO_MODE="muted"
                         fi
                     fi
-                    rm -f "$FFMPEG_PROGRESS_FILE"; touch "$FFMPEG_PROGRESS_FILE"; LAST_SIZE=0; FROZEN_COUNT=0; LAST_FRAME=0; FRAME_STUCK_COUNT=0
+                    rm -f "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; touch "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; LAST_SIZE=0; FROZEN_COUNT=0
                     FFMPEG_PID=$(run_camera_ffmpeg "$AUDIO_MODE")
+                    
+                    # Start concat error monitor if in music mode
+                    if [ "$AUDIO_MODE" = "music" ]; then
+                        (
+                            tail -f "$FFMPEG_ERROR_LOG" 2>/dev/null | while IFS= read -r line; do
+                                if echo "$line" | grep -qE "Error during demuxing|Error retrieving a packet from demuxer"; then
+                                    log "[ERROR] Concat demuxer error detected. Killing FFmpeg PID $FFMPEG_PID..."
+                                    kill -9 $FFMPEG_PID 2>/dev/null
+                                    break
+                                fi
+                            done
+                        ) &
+                        ERROR_MONITOR_PID=$!
+                    fi
+                    
                     sleep 2
                     if kill -0 $FFMPEG_PID 2>/dev/null; then break; fi
                     log "Startup attempt $((RETRY_COUNT+1)) failed. Retrying in 2s..."
@@ -553,6 +569,11 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 
         # FFmpeg Died/Killed Logic
         if [ -n "$FFMPEG_PID" ] && ! kill -0 $FFMPEG_PID 2>/dev/null; then
+            # Kill error monitor if running
+            if [ -n "$ERROR_MONITOR_PID" ]; then
+                kill $ERROR_MONITOR_PID 2>/dev/null
+                ERROR_MONITOR_PID=""
+            fi
             wait $FFMPEG_PID 2>/dev/null; EXIT_CODE=$?
             if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
                 log "[Fallback] Stream died (Code $EXIT_CODE). Switching..."
