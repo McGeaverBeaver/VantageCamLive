@@ -546,17 +546,26 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             # 2. Audio Check
             if [ "$CURRENT_MODE" = "normal" ]; then
                 NEW_AUDIO=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
-                if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then log "Audio Change"; kill $FFMPEG_PID 2>/dev/null; sleep 2; FFMPEG_PID=""; break; fi
-                
-                # 2b. Volume Check - Restart if volume file changed
-                CURRENT_VOLUME=$(cat "/config/music_volume" 2>/dev/null || echo 50)
-                if [ "$CURRENT_VOLUME" != "$LAST_VOLUME" ]; then
-                    log "[Volume] Changed from $LAST_VOLUME to $CURRENT_VOLUME. Restarting..."
-                    LAST_VOLUME=$CURRENT_VOLUME
+                if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then 
+                    log "[Audio] Mode changed: $AUDIO_MODE -> $NEW_AUDIO"
                     kill $FFMPEG_PID 2>/dev/null
-                    sleep 2
+                    sleep 1
                     FFMPEG_PID=""
+                    LAST_VOLUME=$(cat /config/music_volume 2>/dev/null || echo 50)
                     break
+                fi
+                
+                # 2b. Volume Check - Restart if volume file changed (only in active audio modes)
+                if [ "$AUDIO_MODE" != "muted" ]; then
+                    CURRENT_VOLUME=$(cat "/config/music_volume" 2>/dev/null || echo 50)
+                    if [ "$CURRENT_VOLUME" != "$LAST_VOLUME" ]; then
+                        log "[Volume] Changed from $LAST_VOLUME to $CURRENT_VOLUME. Restarting..."
+                        LAST_VOLUME=$CURRENT_VOLUME
+                        kill $FFMPEG_PID 2>/dev/null
+                        sleep 1
+                        FFMPEG_PID=""
+                        break
+                    fi
                 fi
             fi
 
