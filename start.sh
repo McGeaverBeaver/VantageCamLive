@@ -463,6 +463,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
     ERROR_MONITOR_PID=""
     LAST_SIZE=0
     FROZEN_COUNT=0
+    LAST_VOLUME=$(cat /config/music_volume 2>/dev/null || echo 50)
 
     while true; do
         if [ -z "$FFMPEG_PID" ] || ! kill -0 $FFMPEG_PID 2>/dev/null; then
@@ -477,7 +478,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                             AUDIO_MODE="muted"
                         fi
                     fi
-                    rm -f "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; touch "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; LAST_SIZE=0; FROZEN_COUNT=0
+                    rm -f "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; touch "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; LAST_SIZE=0; FROZEN_COUNT=0; LAST_VOLUME=$(cat /config/music_volume 2>/dev/null || echo 50)
                     FFMPEG_PID=$(run_camera_ffmpeg "$AUDIO_MODE")
                     
                     # Start concat error monitor if in music mode
@@ -546,6 +547,17 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             if [ "$CURRENT_MODE" = "normal" ]; then
                 NEW_AUDIO=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
                 if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then log "Audio Change"; kill $FFMPEG_PID 2>/dev/null; sleep 2; FFMPEG_PID=""; break; fi
+                
+                # 2b. Volume Check - Restart if volume file changed
+                CURRENT_VOLUME=$(cat "/config/music_volume" 2>/dev/null || echo 50)
+                if [ "$CURRENT_VOLUME" != "$LAST_VOLUME" ]; then
+                    log "[Volume] Changed from $LAST_VOLUME to $CURRENT_VOLUME. Restarting..."
+                    LAST_VOLUME=$CURRENT_VOLUME
+                    kill $FFMPEG_PID 2>/dev/null
+                    sleep 2
+                    FFMPEG_PID=""
+                    break
+                fi
             fi
 
             # 3. Connection Health Check (Every 3s)
