@@ -40,34 +40,57 @@ def set_volume(vol, restart=True):
     if 0 < vol <= 1:
         vol = vol * 100
 
+    old_vol = get_volume()
     vol = max(0, min(100, int(round(vol))))  # Clamp 0-100
     with open(VOLUME_FILE, 'w') as f:
         f.write(str(vol))
+    print(f"[Audio API] Volume changed: {old_vol} -> {vol}", flush=True)
 
     if restart:
         # Signal the restreamer to restart (if audio is active)
-        if get_audio_mode() in ['music', 'unmuted']:
+        current_mode = get_audio_mode()
+        if current_mode in ['music', 'unmuted']:
             try:
                 with open(RESTREAMER_PID_FILE, 'r') as f:
                     pid = int(f.read().strip())
+                print(f"[Audio API] Sending SIGTERM to PID {pid} (mode: {current_mode})", flush=True)
                 os.kill(pid, signal.SIGTERM)
                 return True
-            except (FileNotFoundError, ProcessLookupError, ValueError):
-                return False
+            except FileNotFoundError:
+                print("[Audio API] PID file not found - relying on file monitoring", flush=True)
+                return True
+            except ProcessLookupError:
+                print(f"[Audio API] PID {pid} not found - relying on file monitoring", flush=True)
+                return True
+            except ValueError as e:
+                print(f"[Audio API] Invalid PID: {e}", flush=True)
+                return True
+        else:
+            print(f"[Audio API] Mode is {current_mode}, not restarting stream", flush=True)
     return True
 
 def set_audio_mode(mode):
+    old_mode = get_audio_mode()
     with open(CONTROL_FILE, 'w') as f:
         f.write(mode)
+    print(f"[Audio API] Mode changed: {old_mode} -> {mode}", flush=True)
     
     # Signal the restreamer to restart
     try:
         with open(RESTREAMER_PID_FILE, 'r') as f:
             pid = int(f.read().strip())
+        print(f"[Audio API] Sending SIGTERM to PID {pid}", flush=True)
         os.kill(pid, signal.SIGTERM)
         return True
-    except (FileNotFoundError, ProcessLookupError, ValueError):
-        return False
+    except FileNotFoundError:
+        print("[Audio API] PID file not found - relying on file monitoring", flush=True)
+        return True  # File was written, start.sh will detect it
+    except ProcessLookupError:
+        print(f"[Audio API] PID {pid} not found - relying on file monitoring", flush=True)
+        return True  # File was written, start.sh will detect it
+    except ValueError as e:
+        print(f"[Audio API] Invalid PID: {e}", flush=True)
+        return True  # File was written, start.sh will detect it
 
 class AudioControlHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
