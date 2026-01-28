@@ -414,7 +414,11 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 
         # Combine RTSP Input + Overlay Inputs
         if [ "$audio_mode" = "unmuted" ]; then
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
+            # Read volume (0-100) and convert to decimal (0.0-1.0)
+            local vol_pct=$(cat /config/music_volume 2>/dev/null || echo 50)
+            local vol_dec=$(awk "BEGIN {printf \"%.2f\", $vol_pct/100}")
+            log "[Audio] Volume: ${vol_pct}% (${vol_dec}x)"
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 -af "volume=${vol_dec}" $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         elif [ "$audio_mode" = "music" ]; then
             # Read volume (0-100) and convert to decimal (0.0-1.0)
             local vol_pct=$(cat /config/music_volume 2>/dev/null || echo 50)

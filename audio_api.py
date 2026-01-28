@@ -25,19 +25,28 @@ def get_audio_mode():
 def get_volume():
     try:
         with open(VOLUME_FILE, 'r') as f:
-            vol = int(f.read().strip())
+            vol = int(float(f.read().strip()))
             return max(0, min(100, vol))  # Clamp 0-100
     except (FileNotFoundError, ValueError):
         return 50  # Default 50%
 
 def set_volume(vol, restart=True):
-    vol = max(0, min(100, int(vol)))  # Clamp 0-100
+    try:
+        vol = float(vol)
+    except (TypeError, ValueError):
+        raise ValueError("Volume must be a number")
+
+    # Allow 0.0-1.0 as percent scale
+    if 0 < vol <= 1:
+        vol = vol * 100
+
+    vol = max(0, min(100, int(round(vol))))  # Clamp 0-100
     with open(VOLUME_FILE, 'w') as f:
         f.write(str(vol))
-    
+
     if restart:
-        # Signal the restreamer to restart (only if in music mode)
-        if get_audio_mode() == 'music':
+        # Signal the restreamer to restart (if audio is active)
+        if get_audio_mode() in ['music', 'unmuted']:
             try:
                 with open(RESTREAMER_PID_FILE, 'r') as f:
                     pid = int(f.read().strip())
@@ -134,8 +143,8 @@ class AudioControlHandler(BaseHTTPRequestHandler):
                 if vol is None:
                     self.send_json({'error': 'Missing volume parameter'}, 400)
                     return
-                set_volume(vol)
-                self.send_json({'volume': get_volume(), 'restarted': get_audio_mode() == 'music'})
+                restarted = set_volume(vol)
+                self.send_json({'volume': get_volume(), 'restarted': restarted})
             except (json.JSONDecodeError, ValueError) as e:
                 self.send_json({'error': f'Invalid request: {str(e)}'}, 400)
         else:
@@ -145,6 +154,10 @@ if __name__ == '__main__':
     if not os.path.exists(CONTROL_FILE):
         with open(CONTROL_FILE, 'w') as f:
             f.write('muted')
+
+    if not os.path.exists(VOLUME_FILE):
+        with open(VOLUME_FILE, 'w') as f:
+            f.write('50')
     
     server = HTTPServer(('0.0.0.0', 9998), AudioControlHandler)
     print("[Audio API] Server started on port 9998")
