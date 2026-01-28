@@ -10,6 +10,7 @@ import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 CONTROL_FILE = "/config/audio_mode"
+VOLUME_FILE = "/config/music_volume"
 RESTREAMER_PID_FILE = "/config/youtube_restreamer.pid"
 API_KEY = os.getenv("AUDIO_API_KEY")  # Read key from Docker Env
 
@@ -20,6 +21,31 @@ def get_audio_mode():
             return mode if mode in ['muted', 'unmuted', 'music'] else 'muted'
     except FileNotFoundError:
         return 'muted'
+
+def get_volume():
+    try:
+        with open(VOLUME_FILE, 'r') as f:
+            vol = int(f.read().strip())
+            return max(0, min(100, vol))  # Clamp 0-100
+    except (FileNotFoundError, ValueError):
+        return 50  # Default 50%
+
+def set_volume(vol, restart=True):
+    vol = max(0, min(100, int(vol)))  # Clamp 0-100
+    with open(VOLUME_FILE, 'w') as f:
+        f.write(str(vol))
+    
+    if restart:
+        # Signal the restreamer to restart (only if in music mode)
+        if get_audio_mode() == 'music':
+            try:
+                with open(RESTREAMER_PID_FILE, 'r') as f:
+                    pid = int(f.read().strip())
+                os.kill(pid, signal.SIGTERM)
+                return True
+            except (FileNotFoundError, ProcessLookupError, ValueError):
+                return False
+    return True
 
 def set_audio_mode(mode):
     with open(CONTROL_FILE, 'w') as f:
@@ -72,8 +98,11 @@ class AudioControlHandler(BaseHTTPRequestHandler):
             self.send_json({
                 'audio': mode,
                 'muted': mode == 'muted',
-                'music': mode == 'music'
+                'music': mode == 'music',
+                'volume': get_volume()
             })
+        elif self.path == '/audio/volume':
+            self.send_json({'volume': get_volume()})
         else:
             self.send_json({'error': 'Not found'}, 404)
     
@@ -95,7 +124,20 @@ class AudioControlHandler(BaseHTTPRequestHandler):
             self.send_json({'audio': new_mode, 'muted': new_mode == 'muted', 'music': False})
         elif self.path == '/audio/music':
             set_audio_mode('music')
-            self.send_json({'audio': 'music', 'muted': False, 'music': True})
+            self.send_json({'audio': 'music', 'muted': False, 'music': True, 'volume': get_volume()})
+        elif self.path == '/audio/volume':
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length).decode('utf-8') if content_length > 0 else ''
+                data = json.loads(body) if body else {}
+                vol = data.get('volume')
+                if vol is None:
+                    self.send_json({'error': 'Missing volume parameter'}, 400)
+                    return
+                set_volume(vol)
+                self.send_json({'volume': get_volume(), 'restarted': get_audio_mode() == 'music'})
+            except (json.JSONDecodeError, ValueError) as e:
+                self.send_json({'error': f'Invalid request: {str(e)}'}, 400)
         else:
             self.send_json({'error': 'Not found'}, 404)
 
