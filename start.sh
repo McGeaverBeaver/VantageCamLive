@@ -419,6 +419,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             # Read volume (0-100) and convert to decimal (0.0-1.0)
             local vol_pct=$(cat /config/music_volume 2>/dev/null || echo 50)
             local vol_dec=$(awk "BEGIN {printf \"%.2f\", $vol_pct/100}")
+            log "[Music] Volume: ${vol_pct}% (${vol_dec}x)"
             # Music mode: stream from playlist, loop infinitely with -stream_loop -1
             # Redirect stderr to error log for concat error monitoring
             ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -thread_queue_size 4096 -re -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 -af "volume=${vol_dec},aresample=async=1:first_pts=0" $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>> "$FFMPEG_ERROR_LOG" &
