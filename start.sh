@@ -88,13 +88,15 @@ touch "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"
 # ==============================================================================
 #  HEALTH CHECK FUNCTIONS
 # ==============================================================================
-# Fast TCP-only check (for quick iteration, NOT for fallback decisions)
+# Fast TCP-only check (for quick iteration during normal operation)
+# This does NOT open an RTSP connection, just checks if port is reachable
 check_rtsp_tcp() {
     if timeout 2 bash -c "echo >/dev/tcp/$RTSP_HOST/$RTSP_PORT" 2>/dev/null; then return 0; else return 1; fi
 }
 
-# Robust check that validates actual video frames (use for fallback decisions)
-check_rtsp_basic() {
+# Full video validation using ffprobe (ONLY use for fallback/recovery decisions)
+# WARNING: This opens a second RTSP connection - don't call frequently during normal streaming!
+check_rtsp_full() {
     # First do quick TCP check
     if ! check_rtsp_tcp; then return 1; fi
 
@@ -107,6 +109,11 @@ check_rtsp_basic() {
         log "[RTSP] TCP port open but no valid video frames - source is NOT healthy"
         return 1
     fi
+}
+
+# Backwards compatibility alias - use TCP for quick checks to avoid starving FFmpeg connection
+check_rtsp_basic() {
+    check_rtsp_tcp
 }
 
 check_rtsp_robust() {
@@ -652,9 +659,10 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                        fi
                    else
                        # Now we can check for RTSP recovery, but require multiple consecutive successes
-                       if check_rtsp_basic; then
+                       # Use FULL ffprobe check for recovery decisions (in fallback mode, no FFmpeg competing)
+                       if check_rtsp_full; then
                            RTSP_RECOVERY_COUNT=$((RTSP_RECOVERY_COUNT + 1))
-                           log "[Fallback] RTSP check passed (${RTSP_RECOVERY_COUNT}/${RTSP_RECOVERY_REQUIRED} consecutive successes needed)"
+                           log "[Fallback] RTSP video validated (${RTSP_RECOVERY_COUNT}/${RTSP_RECOVERY_REQUIRED} consecutive successes needed)"
 
                            if [ $RTSP_RECOVERY_COUNT -ge $RTSP_RECOVERY_REQUIRED ]; then
                                log "[Fallback] RTSP stable for $RTSP_RECOVERY_COUNT consecutive checks - safe to switch back!"
@@ -731,8 +739,8 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                     RTSP_RECOVERY_COUNT=0
                     FALLBACK_ENTERED_AT=$(date +%s)
                     CONSECUTIVE_CRASHES=0
-                # Check if RTSP source is actually providing valid video
-                elif ! check_rtsp_basic; then
+                # Check if RTSP source is actually providing valid video (use FULL check for mode decision)
+                elif ! check_rtsp_full; then
                     log "[Fallback] RTSP source not providing valid video. Switching to fallback..."
                     CURRENT_MODE="fallback"
                     echo "fallback" > "$STREAM_MODE_FILE"
@@ -761,9 +769,10 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                      if [ $FALLBACK_DURATION -lt $MIN_FALLBACK_DURATION ]; then
                          log "[Fallback] Still in minimum fallback period (${FALLBACK_DURATION}s/${MIN_FALLBACK_DURATION}s) - staying in fallback"
                          sleep 2
-                     elif check_rtsp_basic; then
+                     # Use FULL ffprobe check for recovery decision (worth the extra connection)
+                     elif check_rtsp_full; then
                          RTSP_RECOVERY_COUNT=$((RTSP_RECOVERY_COUNT + 1))
-                         log "[Fallback] RTSP check passed after FFmpeg died (${RTSP_RECOVERY_COUNT}/${RTSP_RECOVERY_REQUIRED} needed)"
+                         log "[Fallback] RTSP video validated (${RTSP_RECOVERY_COUNT}/${RTSP_RECOVERY_REQUIRED} needed)"
 
                          if [ $RTSP_RECOVERY_COUNT -ge $RTSP_RECOVERY_REQUIRED ]; then
                              log "[Fallback] RTSP stable - switching to Normal (entering ${RECOVERY_PROBATION_DURATION}s probation period)..."
