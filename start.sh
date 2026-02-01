@@ -590,13 +590,20 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         while kill -0 $FFMPEG_PID 2>/dev/null; do
             LOOP_COUNT=$((LOOP_COUNT + 1))
 
-            # 1. ZOMBIE CHECK (Size-Based) - Only in Normal Mode
+            # 1. STALL DETECTION (Progress File) - Only in Normal Mode
+            # This is the PRIMARY way we detect if the camera feed is working
             if [ "$CURRENT_MODE" = "normal" ]; then
                 CURRENT_SIZE=$(wc -c < "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)
                 if [ "$CURRENT_SIZE" -le "$LAST_SIZE" ]; then
                     FROZEN_COUNT=$((FROZEN_COUNT + 1))
-                    if [ $FROZEN_COUNT -ge 12 ]; then
-                        log "[ERROR] FFmpeg FROZEN (Size static at $CURRENT_SIZE for 12s). Killing..."
+                    # Reduced from 12 to 8 seconds for faster fallback
+                    if [ $FROZEN_COUNT -ge 8 ]; then
+                        log "[STALL] FFmpeg output frozen for ${FROZEN_COUNT}s - switching to fallback!"
+                        CURRENT_MODE="fallback"
+                        echo "fallback" > "$STREAM_MODE_FILE"
+                        RTSP_RECOVERY_COUNT=0
+                        FALLBACK_ENTERED_AT=$(date +%s)
+                        IN_RECOVERY_PROBATION=false
                         kill -9 $FFMPEG_PID 2>/dev/null
                         break
                     fi
@@ -606,10 +613,10 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 fi
             fi
 
-            # 2. Audio Check
+            # 2. Audio Mode Check
             if [ "$CURRENT_MODE" = "normal" ]; then
                 NEW_AUDIO=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
-                if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then 
+                if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then
                     log "[Audio] Mode changed: $AUDIO_MODE -> $NEW_AUDIO"
                     kill $FFMPEG_PID 2>/dev/null
                     sleep 1
@@ -617,7 +624,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                     LAST_VOLUME=$(cat /config/music_volume 2>/dev/null || echo 50)
                     break
                 fi
-                
+
                 # 2b. Volume Check - Restart if volume file changed (only in active audio modes)
                 if [ "$AUDIO_MODE" != "muted" ]; then
                     CURRENT_VOLUME=$(cat "/config/music_volume" 2>/dev/null || echo 50)
@@ -632,53 +639,34 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 fi
             fi
 
-            # 3. Connection Health Check (Every 3s)
-            if [ $((LOOP_COUNT % 3)) -eq 0 ]; then
-                if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
-                   if ! check_rtsp_basic; then
-                       if [ "$IN_RECOVERY_PROBATION" = "true" ]; then
-                           log "[Probation] RTSP failed during probation - IMMEDIATELY returning to fallback!"
-                           IN_RECOVERY_PROBATION=false
-                           CURRENT_MODE="fallback"
-                           echo "fallback" > "$STREAM_MODE_FILE"
-                           RTSP_RECOVERY_COUNT=0
-                           FALLBACK_ENTERED_AT=$(date +%s)
-                       fi
-                       log "[Fallback] RTSP Ping Failed - Killing PID $FFMPEG_PID..."
-                       kill -9 $FFMPEG_PID 2>/dev/null
-                       break
-                   fi
-                fi
-                if [ "$CURRENT_MODE" = "fallback" ]; then
-                   FALLBACK_DURATION=$(($(date +%s) - FALLBACK_ENTERED_AT))
+            # 3. Recovery Check (Only in Fallback Mode)
+            # We try to start FFmpeg with the camera - if it works, we switch back
+            if [ $((LOOP_COUNT % 5)) -eq 0 ] && [ "$CURRENT_MODE" = "fallback" ]; then
+                FALLBACK_DURATION=$(($(date +%s) - FALLBACK_ENTERED_AT))
 
-                   # Don't even try recovery until minimum duration has passed
-                   if [ $FALLBACK_DURATION -lt $MIN_FALLBACK_DURATION ]; then
-                       if [ $((LOOP_COUNT % 10)) -eq 0 ]; then
-                           log "[Fallback] Waiting for stability (${FALLBACK_DURATION}s/${MIN_FALLBACK_DURATION}s before recovery attempts)"
-                       fi
-                   else
-                       # Now we can check for RTSP recovery, but require multiple consecutive successes
-                       # Use FULL ffprobe check for recovery decisions (in fallback mode, no FFmpeg competing)
-                       if check_rtsp_full; then
-                           RTSP_RECOVERY_COUNT=$((RTSP_RECOVERY_COUNT + 1))
-                           log "[Fallback] RTSP video validated (${RTSP_RECOVERY_COUNT}/${RTSP_RECOVERY_REQUIRED} consecutive successes needed)"
+                # Don't try recovery until minimum duration has passed
+                if [ $FALLBACK_DURATION -lt $MIN_FALLBACK_DURATION ]; then
+                    if [ $((LOOP_COUNT % 10)) -eq 0 ]; then
+                        log "[Fallback] Waiting ${FALLBACK_DURATION}s/${MIN_FALLBACK_DURATION}s before recovery attempts"
+                    fi
+                else
+                    # Try a quick TCP check first (doesn't open RTSP connection)
+                    if check_rtsp_tcp; then
+                        RTSP_RECOVERY_COUNT=$((RTSP_RECOVERY_COUNT + 1))
+                        log "[Fallback] TCP check passed (${RTSP_RECOVERY_COUNT}/${RTSP_RECOVERY_REQUIRED} needed)"
 
-                           if [ $RTSP_RECOVERY_COUNT -ge $RTSP_RECOVERY_REQUIRED ]; then
-                               log "[Fallback] RTSP stable for $RTSP_RECOVERY_COUNT consecutive checks - safe to switch back!"
-                               log "[Fallback] Killing BRB Stream (PID $FFMPEG_PID) to switch to normal..."
-                               RECOVERY_APPROVED=true
-                               kill -9 $FFMPEG_PID 2>/dev/null
-                               break
-                           fi
-                       else
-                           # RTSP check failed - reset recovery counter
-                           if [ $RTSP_RECOVERY_COUNT -gt 0 ]; then
-                               log "[Fallback] RTSP check failed - resetting recovery counter from $RTSP_RECOVERY_COUNT to 0"
-                           fi
-                           RTSP_RECOVERY_COUNT=0
-                       fi
-                   fi
+                        if [ $RTSP_RECOVERY_COUNT -ge $RTSP_RECOVERY_REQUIRED ]; then
+                            log "[Fallback] TCP stable - attempting to switch back to normal..."
+                            RECOVERY_APPROVED=true
+                            kill $FFMPEG_PID 2>/dev/null
+                            break
+                        fi
+                    else
+                        if [ $RTSP_RECOVERY_COUNT -gt 0 ]; then
+                            log "[Fallback] TCP check failed - resetting counter"
+                        fi
+                        RTSP_RECOVERY_COUNT=0
+                    fi
                 fi
             fi
 
@@ -707,7 +695,9 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             sleep 1
         done
 
-        # FFmpeg Died/Killed Logic
+        # FFmpeg Died/Killed Logic - SIMPLIFIED
+        # In normal mode: FFmpeg died = switch to fallback IMMEDIATELY (no RTSP check)
+        # In fallback mode: Recovery approved = switch to normal with probation
         if [ -n "$FFMPEG_PID" ] && ! kill -0 $FFMPEG_PID 2>/dev/null; then
             # Kill error monitor if running
             if [ -n "$ERROR_MONITOR_PID" ]; then
@@ -715,86 +705,37 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 ERROR_MONITOR_PID=""
             fi
             wait $FFMPEG_PID 2>/dev/null; EXIT_CODE=$?
-
-            # Track crashes - if FFmpeg died within 30 seconds of starting, count it as a crash
             UPTIME=$(($(date +%s) - LAST_FFMPEG_START))
-            if [ "$CURRENT_MODE" = "normal" ]; then
-                if [ $UPTIME -lt 30 ]; then
-                    CONSECUTIVE_CRASHES=$((CONSECUTIVE_CRASHES + 1))
-                    log "[Crash] FFmpeg died after ${UPTIME}s (exit code: $EXIT_CODE) - crash count: $CONSECUTIVE_CRASHES/$MAX_CRASHES_BEFORE_FALLBACK"
-                else
-                    # FFmpeg ran for a while, reset crash counter
-                    log "[Crash] FFmpeg ran for ${UPTIME}s before dying - resetting crash counter"
-                    CONSECUTIVE_CRASHES=0
-                fi
-            fi
 
             if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
-                # If in probation period, any failure immediately returns to fallback
-                if [ "$IN_RECOVERY_PROBATION" = "true" ]; then
-                    log "[Probation] FFmpeg died during probation period - IMMEDIATELY returning to fallback!"
-                    IN_RECOVERY_PROBATION=false
-                    CURRENT_MODE="fallback"
-                    echo "fallback" > "$STREAM_MODE_FILE"
-                    RTSP_RECOVERY_COUNT=0
-                    FALLBACK_ENTERED_AT=$(date +%s)
-                    CONSECUTIVE_CRASHES=0
-                # Check if RTSP source is actually providing valid video (use FULL check for mode decision)
-                elif ! check_rtsp_full; then
-                    log "[Fallback] RTSP source not providing valid video. Switching to fallback..."
-                    CURRENT_MODE="fallback"
-                    echo "fallback" > "$STREAM_MODE_FILE"
-                    RTSP_RECOVERY_COUNT=0
-                    FALLBACK_ENTERED_AT=$(date +%s)
-                else
-                    log "[Fallback] Stream died (Code $EXIT_CODE) but RTSP appears healthy. Will retry (crash $CONSECUTIVE_CRASHES/$MAX_CRASHES_BEFORE_FALLBACK)..."
-                    # Don't switch to fallback yet - let the crash counter handle repeated failures
-                fi
+                # FFmpeg died in normal mode = switch to fallback IMMEDIATELY
+                # No need to check RTSP - if FFmpeg died, something is wrong
+                log "[FALLBACK] FFmpeg died (code: $EXIT_CODE, uptime: ${UPTIME}s) - switching to BRB screen!"
+                CURRENT_MODE="fallback"
+                echo "fallback" > "$STREAM_MODE_FILE"
+                RTSP_RECOVERY_COUNT=0
+                FALLBACK_ENTERED_AT=$(date +%s)
+                IN_RECOVERY_PROBATION=false
+
             elif [ "$CURRENT_MODE" = "fallback" ]; then
-                 # Check if recovery was already approved by the monitoring loop (avoid re-check race)
-                 if [ "$RECOVERY_APPROVED" = "true" ]; then
-                     log "[Fallback] Recovery pre-approved by monitoring loop - switching to Normal (${RECOVERY_PROBATION_DURATION}s probation)..."
-                     CURRENT_MODE="normal"
-                     echo "normal" > "$STREAM_MODE_FILE"
-                     CONSECUTIVE_CRASHES=0
-                     RTSP_RECOVERY_COUNT=0
-                     FALLBACK_ENTERED_AT=0
-                     IN_RECOVERY_PROBATION=true
-                     RECOVERY_PROBATION_START=$(date +%s)
-                     RECOVERY_APPROVED=false
-                 else
-                     FALLBACK_DURATION=$(($(date +%s) - FALLBACK_ENTERED_AT))
-
-                     # Enforce minimum fallback duration and stability requirements
-                     if [ $FALLBACK_DURATION -lt $MIN_FALLBACK_DURATION ]; then
-                         log "[Fallback] Still in minimum fallback period (${FALLBACK_DURATION}s/${MIN_FALLBACK_DURATION}s) - staying in fallback"
-                         sleep 2
-                     # Use FULL ffprobe check for recovery decision (worth the extra connection)
-                     elif check_rtsp_full; then
-                         RTSP_RECOVERY_COUNT=$((RTSP_RECOVERY_COUNT + 1))
-                         log "[Fallback] RTSP video validated (${RTSP_RECOVERY_COUNT}/${RTSP_RECOVERY_REQUIRED} needed)"
-
-                         if [ $RTSP_RECOVERY_COUNT -ge $RTSP_RECOVERY_REQUIRED ]; then
-                             log "[Fallback] RTSP stable - switching to Normal (entering ${RECOVERY_PROBATION_DURATION}s probation period)..."
-                             CURRENT_MODE="normal"
-                             echo "normal" > "$STREAM_MODE_FILE"
-                             CONSECUTIVE_CRASHES=0
-                             RTSP_RECOVERY_COUNT=0
-                             FALLBACK_ENTERED_AT=0
-                             IN_RECOVERY_PROBATION=true
-                             RECOVERY_PROBATION_START=$(date +%s)
-                         else
-                             # Need more checks - stay in fallback, restart fallback FFmpeg
-                             log "[Fallback] Need more consecutive checks - restarting fallback stream"
-                             sleep 3  # Wait a bit before restarting fallback
-                         fi
-                     else
-                         log "[Fallback] RTSP still not healthy, staying in fallback mode"
-                         RTSP_RECOVERY_COUNT=0  # Reset on failure
-                         sleep 2
-                     fi
-                 fi
-            else sleep 2; fi
+                # In fallback mode - check if we should try switching back
+                if [ "$RECOVERY_APPROVED" = "true" ]; then
+                    log "[Recovery] Switching to Normal mode (${RECOVERY_PROBATION_DURATION}s probation)..."
+                    CURRENT_MODE="normal"
+                    echo "normal" > "$STREAM_MODE_FILE"
+                    RTSP_RECOVERY_COUNT=0
+                    FALLBACK_ENTERED_AT=0
+                    IN_RECOVERY_PROBATION=true
+                    RECOVERY_PROBATION_START=$(date +%s)
+                    RECOVERY_APPROVED=false
+                else
+                    # Fallback FFmpeg died unexpectedly - just restart it
+                    log "[Fallback] BRB stream died (code: $EXIT_CODE) - restarting..."
+                    sleep 1
+                fi
+            else
+                sleep 2
+            fi
             FFMPEG_PID=""
         fi
     done
