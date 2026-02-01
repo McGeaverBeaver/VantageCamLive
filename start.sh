@@ -443,7 +443,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             local vol_pct=$(cat /config/music_volume 2>/dev/null || echo 50)
             local vol_dec=$(awk "BEGIN {printf \"%.2f\", $vol_pct/100}")
             log "[Audio] Volume: ${vol_pct}% (${vol_dec}x)"
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 -af "volume=${vol_dec}" $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 -af "volume=${vol_dec}" $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>> "$FFMPEG_ERROR_LOG" &
         elif [ "$audio_mode" = "music" ]; then
             # Read volume (0-100) and convert to decimal (0.0-1.0)
             local vol_pct=$(cat /config/music_volume 2>/dev/null || echo 50)
@@ -453,7 +453,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             # Redirect stderr to error log for concat error monitoring
             ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -thread_queue_size 4096 -re -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 -af "volume=${vol_dec},aresample=async=1:first_pts=0" $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>> "$FFMPEG_ERROR_LOG" &
         else
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>> "$FFMPEG_ERROR_LOG" &
         fi
         echo $!
     }
@@ -503,6 +503,8 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
     RECOVERY_PROBATION_START=0
     RECOVERY_PROBATION_DURATION=60 # Must run stable for 60s after leaving fallback
     RECOVERY_APPROVED=false        # Set when monitoring loop approves recovery (prevents re-check race)
+    # Decoder error tracking
+    LAST_ERROR_SIZE=0
 
     while true; do
         if [ -z "$FFMPEG_PID" ] || ! kill -0 $FFMPEG_PID 2>/dev/null; then
@@ -531,7 +533,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                                 AUDIO_MODE="muted"
                             fi
                         fi
-                        rm -f "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; touch "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; LAST_SIZE=0; FROZEN_COUNT=0; LAST_VOLUME=$(cat /config/music_volume 2>/dev/null || echo 50)
+                        rm -f "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; touch "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; LAST_SIZE=0; FROZEN_COUNT=0; LAST_ERROR_SIZE=0; LAST_VOLUME=$(cat /config/music_volume 2>/dev/null || echo 50)
                         FFMPEG_PID=$(run_camera_ffmpeg "$AUDIO_MODE")
                         LAST_FFMPEG_START=$(date +%s)
 
@@ -610,6 +612,27 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 else
                     FROZEN_COUNT=0
                     LAST_SIZE=$CURRENT_SIZE
+                fi
+
+                # 1b. DECODER ERROR DETECTION - Check for excessive HEVC errors
+                # If we see many decoder errors, the stream quality is bad - switch to fallback
+                if [ $((LOOP_COUNT % 5)) -eq 0 ] && [ -f "$FFMPEG_ERROR_LOG" ]; then
+                    ERROR_SIZE=$(wc -c < "$FFMPEG_ERROR_LOG" 2>/dev/null || echo 0)
+                    # If error log is growing rapidly (>10KB in 5 seconds), stream is corrupted
+                    if [ -n "$LAST_ERROR_SIZE" ] && [ $ERROR_SIZE -gt $((LAST_ERROR_SIZE + 10000)) ]; then
+                        HEVC_ERRORS=$(grep -c "Could not find ref with POC\|cu_qp_delta.*outside\|Error parsing NAL" "$FFMPEG_ERROR_LOG" 2>/dev/null || echo 0)
+                        if [ $HEVC_ERRORS -gt 50 ]; then
+                            log "[ERROR] Excessive decoder errors detected ($HEVC_ERRORS errors) - switching to fallback!"
+                            CURRENT_MODE="fallback"
+                            echo "fallback" > "$STREAM_MODE_FILE"
+                            RTSP_RECOVERY_COUNT=0
+                            FALLBACK_ENTERED_AT=$(date +%s)
+                            IN_RECOVERY_PROBATION=false
+                            kill -9 $FFMPEG_PID 2>/dev/null
+                            break
+                        fi
+                    fi
+                    LAST_ERROR_SIZE=$ERROR_SIZE
                 fi
             fi
 
