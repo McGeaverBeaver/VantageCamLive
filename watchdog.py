@@ -140,10 +140,11 @@ def check_rtsp_tcp_only(host, port):
 
 def check_rtsp_source_health():
     """
-    Check if the RTSP source is actually providing valid video.
+    Check if the RTSP source is reachable.
 
-    IMPORTANT: This now uses ffprobe to verify actual video frames, not just TCP connectivity.
-    This fixes the issue where TCP port is open but video is invalid (internet outage, camera freeze, etc.)
+    NOTE: We now ONLY do TCP checks, NOT ffprobe.
+    Opening ffprobe connections was causing issues when FFmpeg is also connected
+    (Frigate/cameras have limited concurrent connections, causing stream corruption).
 
     Returns: 'healthy', 'unreachable', or 'unknown'
     """
@@ -167,25 +168,14 @@ def check_rtsp_source_health():
 
     logger.info(f"Checking RTSP source: {safe_url} ({host}:{port})")
 
-    # Step 1: Quick TCP check first
-    if not check_rtsp_tcp_only(host, port):
+    # TCP-only check - does NOT open an RTSP connection
+    # This avoids competing with FFmpeg for limited RTSP connections
+    if check_rtsp_tcp_only(host, port):
+        logger.info(f"RTSP source HEALTHY - TCP connection to {host}:{port} succeeded")
+        return 'healthy'
+    else:
         logger.warning(f"RTSP source UNREACHABLE - TCP connection to {host}:{port} failed")
         return 'unreachable'
-
-    logger.debug(f"TCP connection to {host}:{port} succeeded, now validating video stream...")
-
-    # Step 2: Use ffprobe to validate actual video frames (critical for catching "TCP up but no video" scenarios)
-    ffprobe_status = check_rtsp_with_ffprobe()
-    if ffprobe_status == 'healthy':
-        logger.info(f"RTSP source HEALTHY - TCP connected AND video stream validated")
-        return 'healthy'
-    elif ffprobe_status == 'unreachable':
-        logger.warning(f"RTSP source UNHEALTHY - TCP port open but NO VALID VIDEO (camera freeze, network issue, etc.)")
-        return 'unreachable'
-    else:
-        # ffprobe not available or unknown error - fall back to TCP-only result
-        logger.info(f"RTSP source TCP HEALTHY (ffprobe unavailable for video validation)")
-        return 'healthy'
 
 
 def is_fallback_mode():
@@ -849,30 +839,19 @@ def wait_for_rtsp_source(max_wait=300):
     while (time.time() - start_time) < max_wait:
         check_count += 1
 
-        # Try TCP check first (faster)
+        # TCP-only check - don't use ffprobe to avoid connection conflicts
         tcp_status = check_rtsp_source_health()
 
         if tcp_status == 'healthy':
-            # Double-check with ffprobe if TCP succeeded
-            ffprobe_status = check_rtsp_with_ffprobe()
-            if ffprobe_status == 'healthy':
-                logger.info(f"RTSP source recovered after {check_count} checks ({time.time() - start_time:.0f}s)")
+            logger.info(f"RTSP source recovered after {check_count} checks ({time.time() - start_time:.0f}s)")
 
-                # Alert if it was previously down
-                if state.rtsp_was_down:
-                    alert_credential_error('rtsp_recovered',
-                        f"Camera RTSP source is back online after {time.time() - start_time:.0f} seconds")
-                    state.rtsp_was_down = False
+            # Alert if it was previously down
+            if state.rtsp_was_down:
+                alert_credential_error('rtsp_recovered',
+                    f"Camera RTSP source is back online after {time.time() - start_time:.0f} seconds")
+                state.rtsp_was_down = False
 
-                return True
-            elif ffprobe_status == 'unknown':
-                # ffprobe not available, trust TCP check
-                logger.info(f"RTSP source recovered (TCP check) after {check_count} checks")
-                if state.rtsp_was_down:
-                    alert_credential_error('rtsp_recovered',
-                        f"Camera RTSP source is back online after {time.time() - start_time:.0f} seconds")
-                    state.rtsp_was_down = False
-                return True
+            return True
 
         # Wait 10 seconds between checks
         elapsed = time.time() - start_time
