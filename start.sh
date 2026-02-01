@@ -88,11 +88,29 @@ touch "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"
 # ==============================================================================
 #  HEALTH CHECK FUNCTIONS
 # ==============================================================================
-check_rtsp_basic() {
+# Fast TCP-only check (for quick iteration, NOT for fallback decisions)
+check_rtsp_tcp() {
     if timeout 2 bash -c "echo >/dev/tcp/$RTSP_HOST/$RTSP_PORT" 2>/dev/null; then return 0; else return 1; fi
 }
+
+# Robust check that validates actual video frames (use for fallback decisions)
+check_rtsp_basic() {
+    # First do quick TCP check
+    if ! check_rtsp_tcp; then return 1; fi
+
+    # Then validate we can actually get video frames with ffprobe
+    # This catches "port open but no valid video" scenarios (internet outage, camera freeze, etc.)
+    if timeout 8 ffprobe -v error -rtsp_transport tcp -buffer_size 2097152 \
+        -i "$RTSP_SOURCE" -show_entries stream=codec_type -of csv=p=0 2>/dev/null | grep -q "video"; then
+        return 0
+    else
+        log "[RTSP] TCP port open but no valid video frames - source is NOT healthy"
+        return 1
+    fi
+}
+
 check_rtsp_robust() {
-    if ! check_rtsp_basic; then return 1; fi
+    if ! check_rtsp_tcp; then return 1; fi
     if timeout 10 ffprobe -v error -rtsp_transport tcp -buffer_size 2097152 -i "$1" -t 1 -f null - 2>/dev/null; then return 0; else return 1; fi
 }
 
@@ -464,55 +482,74 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
     LAST_SIZE=0
     FROZEN_COUNT=0
     LAST_VOLUME=$(cat /config/music_volume 2>/dev/null || echo 50)
+    # Crash counter for forcing fallback after repeated failures
+    CONSECUTIVE_CRASHES=0
+    MAX_CRASHES_BEFORE_FALLBACK=5
+    LAST_FFMPEG_START=0
 
     while true; do
         if [ -z "$FFMPEG_PID" ] || ! kill -0 $FFMPEG_PID 2>/dev/null; then
             if [ "$CURRENT_MODE" = "normal" ]; then
-                RETRY_COUNT=0
-                while [ $RETRY_COUNT -lt 3 ]; do
-                    AUDIO_MODE=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
-                    # Generate music playlist if music mode is enabled
-                    if [ "$AUDIO_MODE" = "music" ]; then
-                        if ! generate_music_playlist; then
-                            log "[Music] No music files available, falling back to muted"
-                            AUDIO_MODE="muted"
-                        fi
-                    fi
-                    rm -f "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; touch "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; LAST_SIZE=0; FROZEN_COUNT=0; LAST_VOLUME=$(cat /config/music_volume 2>/dev/null || echo 50)
-                    FFMPEG_PID=$(run_camera_ffmpeg "$AUDIO_MODE")
-                    
-                    # Start concat error monitor if in music mode
-                    if [ "$AUDIO_MODE" = "music" ]; then
-                        (
-                            tail -f "$FFMPEG_ERROR_LOG" 2>/dev/null | while IFS= read -r line; do
-                                if echo "$line" | grep -qE "Error during demuxing|Error retrieving a packet from demuxer"; then
-                                    log "[ERROR] Concat demuxer error detected. Killing FFmpeg PID $FFMPEG_PID..."
-                                    kill -9 $FFMPEG_PID 2>/dev/null
-                                    break
-                                fi
-                            done
-                        ) &
-                        ERROR_MONITOR_PID=$!
-                    fi
-                    
-                    sleep 2
-                    if kill -0 $FFMPEG_PID 2>/dev/null; then break; fi
-                    log "Startup attempt $((RETRY_COUNT+1)) failed. Retrying in 2s..."
-                    RETRY_COUNT=$((RETRY_COUNT+1))
-                done
-                if ! kill -0 $FFMPEG_PID 2>/dev/null; then
-                     log "Startup failed. Forcing Fallback..."
-                     CURRENT_MODE="fallback"
-                     FFMPEG_PID=$(run_fallback_ffmpeg)
-                fi
-                echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
-                sleep 0.5  # Let FFmpeg init complete before logging
-                if [ "$AUDIO_MODE" = "music" ]; then
-                    log "FFmpeg started (PID: $FFMPEG_PID) - Music mode"
-                elif [ "$AUDIO_MODE" = "unmuted" ]; then
-                    log "FFmpeg started (PID: $FFMPEG_PID) - Audio unmuted"
+                # Check if we've hit the crash limit - force fallback to break the cycle
+                if [ $CONSECUTIVE_CRASHES -ge $MAX_CRASHES_BEFORE_FALLBACK ]; then
+                    log "[CRITICAL] FFmpeg crashed $CONSECUTIVE_CRASHES times in a row - FORCING FALLBACK MODE"
+                    log "[CRITICAL] This usually means RTSP source is reachable but video is invalid (camera freeze, network issue, etc.)"
+                    CURRENT_MODE="fallback"
+                    echo "fallback" > "$STREAM_MODE_FILE"
+                    CONSECUTIVE_CRASHES=0
+                    FFMPEG_PID=$(run_fallback_ffmpeg)
+                    echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
+                    sleep 0.5
+                    log "[Fallback] FFmpeg started (PID: $FFMPEG_PID) - Forced by crash limit"
                 else
-                    log "FFmpeg started (PID: $FFMPEG_PID) - Muted"
+                    RETRY_COUNT=0
+                    while [ $RETRY_COUNT -lt 3 ]; do
+                        AUDIO_MODE=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
+                        # Generate music playlist if music mode is enabled
+                        if [ "$AUDIO_MODE" = "music" ]; then
+                            if ! generate_music_playlist; then
+                                log "[Music] No music files available, falling back to muted"
+                                AUDIO_MODE="muted"
+                            fi
+                        fi
+                        rm -f "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; touch "$FFMPEG_PROGRESS_FILE" "$FFMPEG_ERROR_LOG"; LAST_SIZE=0; FROZEN_COUNT=0; LAST_VOLUME=$(cat /config/music_volume 2>/dev/null || echo 50)
+                        FFMPEG_PID=$(run_camera_ffmpeg "$AUDIO_MODE")
+                        LAST_FFMPEG_START=$(date +%s)
+
+                        # Start concat error monitor if in music mode
+                        if [ "$AUDIO_MODE" = "music" ]; then
+                            (
+                                tail -f "$FFMPEG_ERROR_LOG" 2>/dev/null | while IFS= read -r line; do
+                                    if echo "$line" | grep -qE "Error during demuxing|Error retrieving a packet from demuxer"; then
+                                        log "[ERROR] Concat demuxer error detected. Killing FFmpeg PID $FFMPEG_PID..."
+                                        kill -9 $FFMPEG_PID 2>/dev/null
+                                        break
+                                    fi
+                                done
+                            ) &
+                            ERROR_MONITOR_PID=$!
+                        fi
+
+                        sleep 2
+                        if kill -0 $FFMPEG_PID 2>/dev/null; then break; fi
+                        log "Startup attempt $((RETRY_COUNT+1)) failed. Retrying in 2s..."
+                        RETRY_COUNT=$((RETRY_COUNT+1))
+                    done
+                    if ! kill -0 $FFMPEG_PID 2>/dev/null; then
+                         log "Startup failed. Forcing Fallback..."
+                         CURRENT_MODE="fallback"
+                         echo "fallback" > "$STREAM_MODE_FILE"
+                         FFMPEG_PID=$(run_fallback_ffmpeg)
+                    fi
+                    echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
+                    sleep 0.5  # Let FFmpeg init complete before logging
+                    if [ "$AUDIO_MODE" = "music" ]; then
+                        log "FFmpeg started (PID: $FFMPEG_PID) - Music mode (crashes: $CONSECUTIVE_CRASHES)"
+                    elif [ "$AUDIO_MODE" = "unmuted" ]; then
+                        log "FFmpeg started (PID: $FFMPEG_PID) - Audio unmuted (crashes: $CONSECUTIVE_CRASHES)"
+                    else
+                        log "FFmpeg started (PID: $FFMPEG_PID) - Muted (crashes: $CONSECUTIVE_CRASHES)"
+                    fi
                 fi
             else
                 log "[Fallback] Starting 'We'll Be Right Back' stream (With Overlays)..."
@@ -589,7 +626,13 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 
             # Heartbeat Logging every 10s
             if [ $((LOOP_COUNT % 10)) -eq 0 ] && [ "$CURRENT_MODE" = "normal" ]; then
-                log "[Heartbeat] PID:$FFMPEG_PID Size:$CURRENT_SIZE Mode:$AUDIO_MODE"
+                UPTIME_NOW=$(($(date +%s) - LAST_FFMPEG_START))
+                # Reset crash counter after 60 seconds of stable operation
+                if [ $UPTIME_NOW -ge 60 ] && [ $CONSECUTIVE_CRASHES -gt 0 ]; then
+                    log "[Stability] FFmpeg stable for ${UPTIME_NOW}s - resetting crash counter from $CONSECUTIVE_CRASHES to 0"
+                    CONSECUTIVE_CRASHES=0
+                fi
+                log "[Heartbeat] PID:$FFMPEG_PID Size:$CURRENT_SIZE Mode:$AUDIO_MODE Uptime:${UPTIME_NOW}s"
             fi
 
             sleep 1
@@ -603,16 +646,40 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 ERROR_MONITOR_PID=""
             fi
             wait $FFMPEG_PID 2>/dev/null; EXIT_CODE=$?
+
+            # Track crashes - if FFmpeg died within 30 seconds of starting, count it as a crash
+            UPTIME=$(($(date +%s) - LAST_FFMPEG_START))
+            if [ "$CURRENT_MODE" = "normal" ]; then
+                if [ $UPTIME -lt 30 ]; then
+                    CONSECUTIVE_CRASHES=$((CONSECUTIVE_CRASHES + 1))
+                    log "[Crash] FFmpeg died after ${UPTIME}s (exit code: $EXIT_CODE) - crash count: $CONSECUTIVE_CRASHES/$MAX_CRASHES_BEFORE_FALLBACK"
+                else
+                    # FFmpeg ran for a while, reset crash counter
+                    log "[Crash] FFmpeg ran for ${UPTIME}s before dying - resetting crash counter"
+                    CONSECUTIVE_CRASHES=0
+                fi
+            fi
+
             if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
-                log "[Fallback] Stream died (Code $EXIT_CODE). Switching..."
-                CURRENT_MODE="fallback"
-                echo "fallback" > "$STREAM_MODE_FILE"
+                # Check if RTSP source is actually providing valid video
+                if ! check_rtsp_basic; then
+                    log "[Fallback] RTSP source not providing valid video. Switching to fallback..."
+                    CURRENT_MODE="fallback"
+                    echo "fallback" > "$STREAM_MODE_FILE"
+                else
+                    log "[Fallback] Stream died (Code $EXIT_CODE) but RTSP appears healthy. Will retry (crash $CONSECUTIVE_CRASHES/$MAX_CRASHES_BEFORE_FALLBACK)..."
+                    # Don't switch to fallback yet - let the crash counter handle repeated failures
+                fi
             elif [ "$CURRENT_MODE" = "fallback" ]; then
                  if check_rtsp_basic; then
-                     log "[Fallback] Ready. Switching to Normal..."
+                     log "[Fallback] RTSP source now provides valid video. Switching to Normal..."
                      CURRENT_MODE="normal"
                      echo "normal" > "$STREAM_MODE_FILE"
-                 else sleep 1; fi
+                     CONSECUTIVE_CRASHES=0  # Reset crash counter on recovery
+                 else
+                     log "[Fallback] RTSP still not healthy, staying in fallback mode"
+                     sleep 1
+                 fi
             else sleep 2; fi
             FFMPEG_PID=""
         fi

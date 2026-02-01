@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-VantageCam Self-Healing Watchdog v2.8.1
+VantageCam Self-Healing Watchdog v2.9.0
 Monitors YouTube stream status and automatically recovers failed streams.
 Also handles setting the broadcast to PUBLIC after recovery.
+
+v2.9.0 Changes:
+- CRITICAL FIX: RTSP health check now validates actual video frames using ffprobe
+- Previously only TCP port check was used, which would pass even if camera had no video
+- This caused infinite restart loops when source was "reachable" but not providing video
+- Now properly detects "TCP up but no video" scenarios (internet outage, camera freeze)
 
 v2.8.1 Changes:
 - Added RTSP source health check before attempting recovery
@@ -117,9 +123,28 @@ def parse_rtsp_url(rtsp_url):
         return None, None
 
 
+def check_rtsp_tcp_only(host, port):
+    """
+    Quick TCP-only check for RTSP port connectivity.
+    Returns True if TCP port is reachable, False otherwise.
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        return result == 0
+    except:
+        return False
+
+
 def check_rtsp_source_health():
     """
-    Check if the RTSP source is reachable via TCP connection.
+    Check if the RTSP source is actually providing valid video.
+
+    IMPORTANT: This now uses ffprobe to verify actual video frames, not just TCP connectivity.
+    This fixes the issue where TCP port is open but video is invalid (internet outage, camera freeze, etc.)
+
     Returns: 'healthy', 'unreachable', or 'unknown'
     """
     if not RTSP_SOURCE:
@@ -136,36 +161,31 @@ def check_rtsp_source_health():
     # Mask credentials in log output
     safe_url = RTSP_SOURCE
     if '@' in safe_url:
-        # Replace user:pass with ***
         parts = safe_url.split('@')
         protocol = parts[0].split('://')[0]
         safe_url = f"{protocol}://***@{parts[1]}"
 
     logger.info(f"Checking RTSP source: {safe_url} ({host}:{port})")
 
-    try:
-        # TCP connection test with 10 second timeout
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(10)
-        result = sock.connect_ex((host, port))
-        sock.close()
-
-        if result == 0:
-            logger.info(f"RTSP source HEALTHY - TCP connection to {host}:{port} succeeded")
-            return 'healthy'
-        else:
-            logger.warning(f"RTSP source UNREACHABLE - TCP connection to {host}:{port} failed (error: {result})")
-            return 'unreachable'
-
-    except socket.timeout:
-        logger.warning(f"RTSP source UNREACHABLE - TCP connection to {host}:{port} timed out")
+    # Step 1: Quick TCP check first
+    if not check_rtsp_tcp_only(host, port):
+        logger.warning(f"RTSP source UNREACHABLE - TCP connection to {host}:{port} failed")
         return 'unreachable'
-    except socket.gaierror as e:
-        logger.warning(f"RTSP source UNREACHABLE - DNS resolution failed for {host}: {e}")
+
+    logger.debug(f"TCP connection to {host}:{port} succeeded, now validating video stream...")
+
+    # Step 2: Use ffprobe to validate actual video frames (critical for catching "TCP up but no video" scenarios)
+    ffprobe_status = check_rtsp_with_ffprobe()
+    if ffprobe_status == 'healthy':
+        logger.info(f"RTSP source HEALTHY - TCP connected AND video stream validated")
+        return 'healthy'
+    elif ffprobe_status == 'unreachable':
+        logger.warning(f"RTSP source UNHEALTHY - TCP port open but NO VALID VIDEO (camera freeze, network issue, etc.)")
         return 'unreachable'
-    except Exception as e:
-        logger.error(f"RTSP health check error: {e}")
-        return 'unknown'
+    else:
+        # ffprobe not available or unknown error - fall back to TCP-only result
+        logger.info(f"RTSP source TCP HEALTHY (ffprobe unavailable for video validation)")
+        return 'healthy'
 
 
 def is_fallback_mode():
@@ -185,7 +205,9 @@ def is_fallback_mode():
 
 def check_rtsp_with_ffprobe():
     """
-    More thorough RTSP check using ffprobe (if available).
+    Validate RTSP stream by checking for actual video frames using ffprobe.
+    This catches scenarios where TCP port is open but no valid video is available.
+
     Returns: 'healthy', 'unreachable', or 'unknown'
     """
     if not RTSP_SOURCE:
@@ -193,11 +215,12 @@ def check_rtsp_with_ffprobe():
 
     try:
         # Use ffprobe with a short timeout to test RTSP stream
+        # This validates we can actually READ video frames, not just connect
         result = subprocess.run(
-            ['ffprobe', '-v', 'quiet', '-rtsp_transport', 'tcp',
-             '-timeout', '5000000',  # 5 seconds in microseconds
+            ['ffprobe', '-v', 'error', '-rtsp_transport', 'tcp',
+             '-timeout', '8000000',  # 8 seconds in microseconds
              '-i', RTSP_SOURCE,
-             '-show_entries', 'stream=codec_type',
+             '-show_entries', 'stream=codec_type,codec_name,width,height',
              '-of', 'json'],
             capture_output=True,
             text=True,
@@ -205,30 +228,43 @@ def check_rtsp_with_ffprobe():
         )
 
         if result.returncode == 0:
-            # Parse output to verify we got stream info
+            # Parse output to verify we got video stream info
             try:
                 data = json.loads(result.stdout)
-                if data.get('streams'):
-                    logger.info(f"RTSP ffprobe check: HEALTHY - Found {len(data['streams'])} stream(s)")
+                streams = data.get('streams', [])
+                video_streams = [s for s in streams if s.get('codec_type') == 'video']
+
+                if video_streams:
+                    v = video_streams[0]
+                    codec = v.get('codec_name', 'unknown')
+                    width = v.get('width', '?')
+                    height = v.get('height', '?')
+                    logger.info(f"RTSP ffprobe: HEALTHY - Video stream found ({codec} {width}x{height})")
                     return 'healthy'
-            except:
-                pass
-            logger.info("RTSP ffprobe check: HEALTHY - Stream accessible")
-            return 'healthy'
+                else:
+                    logger.warning(f"RTSP ffprobe: UNREACHABLE - Connected but NO VIDEO STREAM in response")
+                    return 'unreachable'
+            except json.JSONDecodeError:
+                logger.warning("RTSP ffprobe: UNREACHABLE - Invalid JSON response")
+                return 'unreachable'
         else:
-            logger.warning(f"RTSP ffprobe check: UNREACHABLE - ffprobe returned {result.returncode}")
-            if result.stderr:
-                logger.debug(f"ffprobe stderr: {result.stderr[:200]}")
+            # ffprobe failed - extract meaningful error message
+            stderr = result.stderr.strip() if result.stderr else "No error message"
+            # Truncate long error messages
+            if len(stderr) > 200:
+                stderr = stderr[:200] + "..."
+            logger.warning(f"RTSP ffprobe: UNREACHABLE - ffprobe exit code {result.returncode}")
+            logger.debug(f"ffprobe error: {stderr}")
             return 'unreachable'
 
     except subprocess.TimeoutExpired:
-        logger.warning("RTSP ffprobe check: UNREACHABLE - timed out after 15s")
+        logger.warning("RTSP ffprobe: UNREACHABLE - Timed out after 15s (no video response)")
         return 'unreachable'
     except FileNotFoundError:
-        logger.debug("ffprobe not available, using TCP check only")
+        logger.debug("ffprobe not available, cannot validate video stream")
         return 'unknown'
     except Exception as e:
-        logger.error(f"RTSP ffprobe check error: {e}")
+        logger.error(f"RTSP ffprobe error: {e}")
         return 'unknown'
 
 # ==============================================================================
@@ -265,7 +301,7 @@ def send_discord_alert(title, message, color=16711680, mention_user=True):
         data = json.dumps(payload).encode()
         req = Request(DISCORD_WEBHOOK_URL, data=data, method='POST')
         req.add_header('Content-Type', 'application/json')
-        req.add_header('User-Agent', 'VantageCam-Watchdog/2.8.1')
+        req.add_header('User-Agent', 'VantageCam-Watchdog/2.9.0')
 
         with urlopen(req, timeout=10) as response:
             return response.status == 204
@@ -606,7 +642,7 @@ def check_stream_status():
     try:
         logger.debug(f"Checking status URL: {STATUS_URL}")
         req = Request(STATUS_URL)
-        req.add_header('User-Agent', 'VantageCam-Watchdog/2.8.1')
+        req.add_header('User-Agent', 'VantageCam-Watchdog/2.9.0')
 
         with urlopen(req, timeout=15) as response:
             raw_data = response.read().decode()
@@ -1016,7 +1052,7 @@ def run_watchdog():
         safe_rtsp = f"{protocol}://***@{parts[1]}"
 
     logger.info("=" * 50)
-    logger.info("VANTAGECAM SELF-HEALING WATCHDOG v2.8.1 STARTED")
+    logger.info("VANTAGECAM SELF-HEALING WATCHDOG v2.9.0 STARTED")
     logger.info("=" * 50)
     logger.info(f"Status URL: {STATUS_URL}")
     logger.info(f"RTSP Source: {safe_rtsp or 'Not configured'}")
