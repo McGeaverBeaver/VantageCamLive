@@ -309,8 +309,11 @@ echo -e "file '$AD_FINAL_TR'\nduration 10\nfile '$AD_FINAL_TR'" > "$AD_PLAYLIST_
 
 if [ "$FALLBACK_ENABLED" = "true" ]; then
     log "--- Generating Fallback Screen ---"
+    log "[FALLBACK CONFIG] FALLBACK_ENABLED=$FALLBACK_ENABLED - BRB mode is ACTIVE"
     python3 /weather.py fallback "$FALLBACK_IMAGE" "$YOUTUBE_WIDTH" "$YOUTUBE_HEIGHT" "We'll Be Right Back"
     echo "normal" > "$STREAM_MODE_FILE"
+else
+    log "[FALLBACK CONFIG] FALLBACK_ENABLED=$FALLBACK_ENABLED - BRB mode is DISABLED"
 fi
 
 # ==============================================================================
@@ -506,8 +509,11 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
     # Decoder error tracking
     LAST_ERROR_SIZE=0
 
+    log "[STARTUP] Entering main loop - FALLBACK_ENABLED=$FALLBACK_ENABLED, Mode=$CURRENT_MODE"
+
     while true; do
         if [ -z "$FFMPEG_PID" ] || ! kill -0 $FFMPEG_PID 2>/dev/null; then
+            log "[LOOP] FFmpeg not running - Mode=$CURRENT_MODE, Crashes=$CONSECUTIVE_CRASHES, FallbackEnabled=$FALLBACK_ENABLED"
             if [ "$CURRENT_MODE" = "normal" ]; then
                 # Check if we've hit the crash limit - force fallback to break the cycle
                 if [ $CONSECUTIVE_CRASHES -ge $MAX_CRASHES_BEFORE_FALLBACK ]; then
@@ -581,11 +587,36 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                     RTSP_RECOVERY_COUNT=0
                 fi
                 log "[Fallback] Starting 'We'll Be Right Back' stream (With Overlays)..."
-                FFMPEG_PID=$(run_fallback_ffmpeg)
-                echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
-                sleep 0.5
-                log "[Fallback] FFmpeg started (PID: $FFMPEG_PID)"
+
+                # Retry loop for fallback FFmpeg startup
+                FALLBACK_RETRY=0
+                FALLBACK_MAX_RETRY=5
+                while [ $FALLBACK_RETRY -lt $FALLBACK_MAX_RETRY ]; do
+                    FFMPEG_PID=$(run_fallback_ffmpeg)
+                    echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
+                    sleep 2
+                    if kill -0 $FFMPEG_PID 2>/dev/null; then
+                        log "[Fallback] BRB stream started (PID: $FFMPEG_PID)"
+                        break
+                    fi
+                    log "[Fallback] BRB stream failed to start (attempt $((FALLBACK_RETRY+1))/$FALLBACK_MAX_RETRY)"
+                    FALLBACK_RETRY=$((FALLBACK_RETRY + 1))
+                    sleep 2
+                done
+
+                if ! kill -0 $FFMPEG_PID 2>/dev/null; then
+                    log "[CRITICAL] Failed to start BRB stream - will retry in main loop"
+                    sleep 5
+                    continue
+                fi
             fi
+        fi
+
+        # Safeguard: Only enter monitoring loop if FFmpeg is running
+        if [ -z "$FFMPEG_PID" ] || ! kill -0 $FFMPEG_PID 2>/dev/null; then
+            log "[DEBUG] No valid FFmpeg PID, restarting main loop..."
+            sleep 1
+            continue
         fi
 
         LOOP_COUNT=0
@@ -730,15 +761,42 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             wait $FFMPEG_PID 2>/dev/null; EXIT_CODE=$?
             UPTIME=$(($(date +%s) - LAST_FFMPEG_START))
 
+            log "[DEBUG] FFmpeg death detected - CURRENT_MODE=$CURRENT_MODE, FALLBACK_ENABLED=$FALLBACK_ENABLED, EXIT_CODE=$EXIT_CODE"
+
             if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
                 # FFmpeg died in normal mode = switch to fallback IMMEDIATELY
                 # No need to check RTSP - if FFmpeg died, something is wrong
-                log "[FALLBACK] FFmpeg died (code: $EXIT_CODE, uptime: ${UPTIME}s) - switching to BRB screen!"
+                CONSECUTIVE_CRASHES=$((CONSECUTIVE_CRASHES + 1))
+                log "[FALLBACK] FFmpeg died (code: $EXIT_CODE, uptime: ${UPTIME}s, crashes: $CONSECUTIVE_CRASHES) - switching to BRB screen!"
                 CURRENT_MODE="fallback"
                 echo "fallback" > "$STREAM_MODE_FILE"
                 RTSP_RECOVERY_COUNT=0
                 FALLBACK_ENTERED_AT=$(date +%s)
                 IN_RECOVERY_PROBATION=false
+
+                # CRITICAL: Start fallback FFmpeg immediately with retries
+                FALLBACK_RETRY=0
+                FALLBACK_MAX_RETRY=5
+                while [ $FALLBACK_RETRY -lt $FALLBACK_MAX_RETRY ]; do
+                    log "[FALLBACK] Starting BRB stream (attempt $((FALLBACK_RETRY+1))/$FALLBACK_MAX_RETRY)..."
+                    FFMPEG_PID=$(run_fallback_ffmpeg)
+                    echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
+                    sleep 2
+                    if kill -0 $FFMPEG_PID 2>/dev/null; then
+                        log "[FALLBACK] BRB stream started successfully (PID: $FFMPEG_PID)"
+                        break
+                    fi
+                    log "[FALLBACK] BRB stream failed to start (attempt $((FALLBACK_RETRY+1)))"
+                    FALLBACK_RETRY=$((FALLBACK_RETRY + 1))
+                    sleep 2
+                done
+
+                if ! kill -0 $FFMPEG_PID 2>/dev/null; then
+                    log "[CRITICAL] Failed to start BRB stream after $FALLBACK_MAX_RETRY attempts!"
+                    log "[CRITICAL] Attempting recovery by restarting main loop..."
+                    FFMPEG_PID=""
+                fi
+                continue  # Skip to top of main loop
 
             elif [ "$CURRENT_MODE" = "fallback" ]; then
                 # In fallback mode - check if we should try switching back
