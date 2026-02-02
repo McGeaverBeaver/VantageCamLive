@@ -81,8 +81,10 @@ MUSIC_PLAYLIST="$WORKDIR/music_playlist.txt"
 FFMPEG_PROGRESS_LOG="true"
 FFMPEG_PROGRESS_FILE="$WORKDIR/ffmpeg_progress.txt"
 FFMPEG_PROGRESS_ARG="-progress $FFMPEG_PROGRESS_FILE"
+FFMPEG_ERROR_FLAG="$WORKDIR/ffmpeg_error.flag"
 rm -f "$FFMPEG_PROGRESS_FILE"
 touch "$FFMPEG_PROGRESS_FILE"
+rm -f "$FFMPEG_ERROR_FLAG"
 
 # ==============================================================================
 #  HEALTH CHECK FUNCTIONS
@@ -93,6 +95,24 @@ check_rtsp_basic() {
 check_rtsp_robust() {
     if ! check_rtsp_basic; then return 1; fi
     if timeout 10 ffprobe -v error -rtsp_transport tcp -buffer_size 2097152 -i "$1" -t 1 -f null - 2>/dev/null; then return 0; else return 1; fi
+}
+
+# Monitor FFmpeg stderr for critical errors in background
+start_error_monitor() {
+    local ffmpeg_pid=$1
+    rm -f "$FFMPEG_ERROR_FLAG"
+    (
+        # Follow FFmpeg's stderr via /proc - no pipes, no PID issues
+        tail -f /proc/$ffmpeg_pid/fd/2 2>/dev/null | while IFS= read -r line; do
+            # Only flag CRITICAL errors that mean stream is dead
+            if echo "$line" | grep -q "Error during demuxing:\|Error retrieving a packet.*Operation timed out\|Connection refused\|Connection reset by peer"; then
+                echo "1" > "$FFMPEG_ERROR_FLAG"
+                log "[Error Monitor] Critical RTSP error detected"
+                break
+            fi
+        done
+    ) &
+    echo $!
 }
 
 # ==============================================================================
@@ -437,6 +457,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                     rm -f "$FFMPEG_PROGRESS_FILE"; touch "$FFMPEG_PROGRESS_FILE"; LAST_SIZE=0; FROZEN_COUNT=0
                     FFMPEG_PID=$(run_camera_ffmpeg "$AUDIO_MODE")
                     FFMPEG_START_TIME=$(date +%s)
+                    ERROR_MONITOR_PID=$(start_error_monitor $FFMPEG_PID)
                     sleep 2
                     if kill -0 $FFMPEG_PID 2>/dev/null; then break; fi
                     log "Startup attempt $((RETRY_COUNT+1)) failed. Retrying in 2s..."
@@ -488,15 +509,35 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             # 2. Audio Check
             if [ "$CURRENT_MODE" = "normal" ]; then
                 NEW_AUDIO=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
-                if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then log "Audio Change"; kill $FFMPEG_PID 2>/dev/null; sleep 2; FFMPEG_PID=""; break; fi
+                if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then 
+                    log "Audio Change"
+                    kill $FFMPEG_PID 2>/dev/null
+                    [ -n "$ERROR_MONITOR_PID" ] && kill $ERROR_MONITOR_PID 2>/dev/null
+                    sleep 2
+                    FFMPEG_PID=""
+                    break
+                fi
             fi
 
             # 3. Connection Health Check (Every 3s)
             if [ $((LOOP_COUNT % 3)) -eq 0 ]; then
                 if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
+                   # Check error flag first (fastest detection)
+                   if [ -f "$FFMPEG_ERROR_FLAG" ]; then
+                       log "[Fallback] Critical RTSP Error Detected - Killing PID $FFMPEG_PID..."
+                       kill -9 $FFMPEG_PID 2>/dev/null
+                       [ -n "$ERROR_MONITOR_PID" ] && kill $ERROR_MONITOR_PID 2>/dev/null
+                       break
+                   fi
+                   
+                   # Also check TCP connectivity as backup
                    if ! check_rtsp_basic; then
                        log "[Fallback] RTSP Ping Failed - Killing PID $FFMPEG_PID..."
                        kill -9 $FFMPEG_PID 2>/dev/null
+                       [ -n "$ERROR_MONITOR_PID" ] && kill $ERROR_MONITOR_PID 2>/dev/null
+                       break
+                   fi
+                fi
                        break
                    fi
                 fi
