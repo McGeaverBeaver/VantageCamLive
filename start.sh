@@ -81,11 +81,8 @@ MUSIC_PLAYLIST="$WORKDIR/music_playlist.txt"
 FFMPEG_PROGRESS_LOG="true"
 FFMPEG_PROGRESS_FILE="$WORKDIR/ffmpeg_progress.txt"
 FFMPEG_PROGRESS_ARG="-progress $FFMPEG_PROGRESS_FILE"
-FFMPEG_ERROR_LOG="$WORKDIR/ffmpeg_error.log"
 rm -f "$FFMPEG_PROGRESS_FILE"
 touch "$FFMPEG_PROGRESS_FILE"
-rm -f "$FFMPEG_ERROR_LOG"
-touch "$FFMPEG_ERROR_LOG"
 
 # ==============================================================================
 #  HEALTH CHECK FUNCTIONS
@@ -382,12 +379,12 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 
         # Combine RTSP Input + Overlay Inputs
         if [ "$audio_mode" = "unmuted" ]; then
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>> "$FFMPEG_ERROR_LOG" &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         elif [ "$audio_mode" = "music" ]; then
             # Music mode: stream from playlist, loop infinitely with -stream_loop -1
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>> "$FFMPEG_ERROR_LOG" &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         else
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>> "$FFMPEG_ERROR_LOG" &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         fi
         echo $!
     }
@@ -497,14 +494,6 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             # 3. Connection Health Check (Every 3s)
             if [ $((LOOP_COUNT % 3)) -eq 0 ]; then
                 if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
-                   # Check for RTSP errors in FFmpeg output (Operation timed out, Connection refused, etc.)
-                   if tail -100 "$FFMPEG_ERROR_LOG" 2>/dev/null | grep -q "Error during demuxing:\|Error retrieving a packet\|Connection refused\|Connection reset\|Operation timed out"; then
-                       log "[Fallback] RTSP Error Detected in FFmpeg - Killing PID $FFMPEG_PID..."
-                       kill -9 $FFMPEG_PID 2>/dev/null
-                       break
-                   fi
-                   
-                   # Also check TCP connectivity as backup
                    if ! check_rtsp_basic; then
                        log "[Fallback] RTSP Ping Failed - Killing PID $FFMPEG_PID..."
                        kill -9 $FFMPEG_PID 2>/dev/null
