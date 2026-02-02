@@ -538,9 +538,6 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                        break
                    fi
                 fi
-                       break
-                   fi
-                fi
                 if [ "$CURRENT_MODE" = "fallback" ]; then
                    if check_rtsp_basic; then
                        log "[Fallback] RTSP Recovered! Killing BRB Stream (PID $FFMPEG_PID) to switch..."
@@ -548,6 +545,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                        break
                    fi
                 fi
+            fi
             fi
 
             # Heartbeat Logging every 10s
