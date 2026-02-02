@@ -141,9 +141,28 @@ EOF
 generate_music_playlist() {
     mkdir -p "$MUSIC_DIR"
     local music_files=()
+    local seen_files=()
     shopt -s nullglob nocaseglob
+    
+    # Collect all MP3 files (lowercase and uppercase patterns)
     for f in "$MUSIC_DIR"/*.mp3 "$MUSIC_DIR"/*.MP3; do
-        music_files+=("$f")
+        # Normalize path to detect duplicates (e.g., Song.mp3 vs Song.MP3)
+        local normalized=$(printf '%s\n' "$f" | tr '[:upper:]' '[:lower:]')
+        
+        # Check if we've already seen this file (case-insensitive)
+        local is_duplicate=0
+        for seen in "${seen_files[@]}"; do
+            if [ "$normalized" = "$seen" ]; then
+                is_duplicate=1
+                break
+            fi
+        done
+        
+        # Only add if not a duplicate and is a regular file
+        if [ "$is_duplicate" -eq 0 ] && [ -f "$f" ]; then
+            music_files+=("$f")
+            seen_files+=("$normalized")
+        fi
     done
     shopt -u nullglob nocaseglob
 
@@ -152,11 +171,18 @@ generate_music_playlist() {
         return 1
     fi
 
-    log "[Music] Found ${#music_files[@]} MP3 file(s) in playlist"
+    log "[Music] Found ${#music_files[@]} unique MP3 file(s) in playlist"
     > "$MUSIC_PLAYLIST"
     for f in "${music_files[@]}"; do
         echo "file '$f'" >> "$MUSIC_PLAYLIST"
     done
+    
+    # Validate playlist has at least one entry
+    if [ ! -s "$MUSIC_PLAYLIST" ]; then
+        log "[Music] ERROR: Playlist file is empty!"
+        return 1
+    fi
+    
     return 0
 }
 
@@ -410,6 +436,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                     fi
                     rm -f "$FFMPEG_PROGRESS_FILE"; touch "$FFMPEG_PROGRESS_FILE"; LAST_SIZE=0; FROZEN_COUNT=0
                     FFMPEG_PID=$(run_camera_ffmpeg "$AUDIO_MODE")
+                    FFMPEG_START_TIME=$(date +%s)
                     sleep 2
                     if kill -0 $FFMPEG_PID 2>/dev/null; then break; fi
                     log "Startup attempt $((RETRY_COUNT+1)) failed. Retrying in 2s..."
@@ -419,11 +446,13 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                      log "Startup failed. Forcing Fallback..."
                      CURRENT_MODE="fallback"
                      FFMPEG_PID=$(run_fallback_ffmpeg)
+                     FFMPEG_START_TIME=$(date +%s)
                 fi
                 echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
                 log "FFmpeg started (PID: $FFMPEG_PID)"
             else
                 FFMPEG_PID=$(run_fallback_ffmpeg)
+                FFMPEG_START_TIME=$(date +%s)
                 echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
             fi
         fi
@@ -433,18 +462,26 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             LOOP_COUNT=$((LOOP_COUNT + 1))
 
             # 1. ZOMBIE CHECK (Size-Based) - Only in Normal Mode
+            # Skip frozen detection for first 5 seconds after startup (initialization time)
             if [ "$CURRENT_MODE" = "normal" ]; then
-                CURRENT_SIZE=$(wc -c < "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)
-                if [ "$CURRENT_SIZE" -le "$LAST_SIZE" ]; then
-                    FROZEN_COUNT=$((FROZEN_COUNT + 1))
-                    if [ $FROZEN_COUNT -ge 12 ]; then
-                        log "[ERROR] FFmpeg FROZEN (Size static at $CURRENT_SIZE for 12s). Killing..."
-                        kill -9 $FFMPEG_PID 2>/dev/null
-                        break
+                FFMPEG_UPTIME=$(( $(date +%s) - FFMPEG_START_TIME ))
+                if [ $FFMPEG_UPTIME -gt 5 ]; then
+                    CURRENT_SIZE=$(wc -c < "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)
+                    if [ "$CURRENT_SIZE" -le "$LAST_SIZE" ]; then
+                        FROZEN_COUNT=$((FROZEN_COUNT + 1))
+                        if [ $FROZEN_COUNT -ge 12 ]; then
+                            log "[ERROR] FFmpeg FROZEN (Size static at $CURRENT_SIZE for 12s after ${FFMPEG_UPTIME}s uptime). Killing..."
+                            kill -9 $FFMPEG_PID 2>/dev/null
+                            break
+                        fi
+                    else
+                        FROZEN_COUNT=0
+                        LAST_SIZE=$CURRENT_SIZE
                     fi
                 else
+                    # Still initializing, reset frozen counter
                     FROZEN_COUNT=0
-                    LAST_SIZE=$CURRENT_SIZE
+                    LAST_SIZE=0
                 fi
             fi
 
