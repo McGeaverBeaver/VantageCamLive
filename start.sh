@@ -546,7 +546,6 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                    fi
                 fi
             fi
-            fi
 
             # Heartbeat Logging every 10s
             if [ $((LOOP_COUNT % 10)) -eq 0 ] && [ "$CURRENT_MODE" = "normal" ]; then
