@@ -81,10 +81,8 @@ MUSIC_PLAYLIST="$WORKDIR/music_playlist.txt"
 FFMPEG_PROGRESS_LOG="true"
 FFMPEG_PROGRESS_FILE="$WORKDIR/ffmpeg_progress.txt"
 FFMPEG_PROGRESS_ARG="-progress $FFMPEG_PROGRESS_FILE"
-FFMPEG_STDERR_LOG="$WORKDIR/ffmpeg_stderr.log"
-FFMPEG_ERROR_FLAG="$WORKDIR/ffmpeg_error.flag"
-rm -f "$FFMPEG_PROGRESS_FILE" "$FFMPEG_STDERR_LOG" "$FFMPEG_ERROR_FLAG"
-touch "$FFMPEG_PROGRESS_FILE" "$FFMPEG_STDERR_LOG"
+rm -f "$FFMPEG_PROGRESS_FILE"
+touch "$FFMPEG_PROGRESS_FILE"
 
 # ==============================================================================
 #  HEALTH CHECK FUNCTIONS
@@ -95,25 +93,6 @@ check_rtsp_basic() {
 check_rtsp_robust() {
     if ! check_rtsp_basic; then return 1; fi
     if timeout 10 ffprobe -v error -rtsp_transport tcp -buffer_size 2097152 -i "$1" -t 1 -f null - 2>/dev/null; then return 0; else return 1; fi
-}
-
-# Monitor FFmpeg stderr for critical errors in background
-start_error_monitor() {
-    local ffmpeg_pid=$1
-    rm -f "$FFMPEG_ERROR_FLAG"
-    (
-        # Monitor both /proc fd and the log file as backup
-        while [ -d "/proc/$ffmpeg_pid" ]; do
-            # Check the stderr log file for error indicators
-            if grep -qi "Error during demuxing\|Error retrieving a packet\|Connection refused\|Connection reset\|Operation timed out" "$FFMPEG_STDERR_LOG" 2>/dev/null; then
-                echo "1" > "$FFMPEG_ERROR_FLAG"
-                log "[Error Monitor] Critical RTSP error detected in logs"
-                break
-            fi
-            sleep 0.2
-        done
-    ) &
-    echo $!
 }
 
 # ==============================================================================
@@ -359,7 +338,9 @@ fi
 # - fflags: Generate timestamps, discard corrupt frames cleanly
 # - err_detect: Ignore decode errors instead of failing
 # - thread_queue_size: Large queue for bursty network conditions
-RTSP_INPUT_OPTS="-thread_queue_size 2048 -rtsp_transport tcp -buffer_size 4194304 -max_delay 500000 -fflags +genpts+discardcorrupt -err_detect ignore_err -timeout 8000000 -i $RTSP_SOURCE"
+# - timeout: 3 second timeout for initial connect and for reads (detect failures faster)
+# - stimeout: 3000000 microseconds (3 sec) socket timeout for detecting dead connections
+RTSP_INPUT_OPTS="-thread_queue_size 2048 -rtsp_transport tcp -buffer_size 4194304 -max_delay 500000 -fflags +genpts+discardcorrupt -err_detect ignore_err -timeout 3000000 -stimeout 3000000 -i $RTSP_SOURCE"
 OVERLAY_INPUTS=""
 
 FILTER_CHAIN="$CAMERA_FILTER"
@@ -400,12 +381,12 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 
         # Combine RTSP Input + Overlay Inputs
         if [ "$audio_mode" = "unmuted" ]; then
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>> "$FFMPEG_STDERR_LOG" &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         elif [ "$audio_mode" = "music" ]; then
             # Music mode: stream from playlist, loop infinitely with -stream_loop -1
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>> "$FFMPEG_STDERR_LOG" &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         else
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>> "$FFMPEG_STDERR_LOG" &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         fi
         echo $!
     }
@@ -433,7 +414,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             -filter_complex "$final_filters" \
             -map "[vfinal]" -map $((INPUT_COUNT)):a \
             $video_codec -c:a aac -b:a 128k \
-            -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2>> "$FFMPEG_STDERR_LOG" &
+            -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
         echo $!
     }
 
@@ -458,7 +439,6 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                     rm -f "$FFMPEG_PROGRESS_FILE"; touch "$FFMPEG_PROGRESS_FILE"; LAST_SIZE=0; FROZEN_COUNT=0
                     FFMPEG_PID=$(run_camera_ffmpeg "$AUDIO_MODE")
                     FFMPEG_START_TIME=$(date +%s)
-                    ERROR_MONITOR_PID=$(start_error_monitor $FFMPEG_PID)
                     sleep 2
                     if kill -0 $FFMPEG_PID 2>/dev/null; then break; fi
                     log "Startup attempt $((RETRY_COUNT+1)) failed. Retrying in 2s..."
@@ -482,15 +462,6 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         LOOP_COUNT=0
         while kill -0 $FFMPEG_PID 2>/dev/null; do
             LOOP_COUNT=$((LOOP_COUNT + 1))
-
-            # 0. ERROR FLAG CHECK (ALWAYS check, highest priority, EVERY iteration)
-            # Triggered by background error monitor on critical RTSP errors like "Operation timed out"
-            if [ -f "$FFMPEG_ERROR_FLAG" ]; then
-                log "[Fallback] Critical RTSP Error Detected (from error monitor) - Switching to BRB..."
-                kill -9 $FFMPEG_PID 2>/dev/null
-                [ -n "$ERROR_MONITOR_PID" ] && kill $ERROR_MONITOR_PID 2>/dev/null
-                break
-            fi
 
             # 1. ZOMBIE CHECK (Size-Based) - Only in Normal Mode
             # Skip frozen detection for first 5 seconds after startup (initialization time)
@@ -519,24 +490,15 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             # 2. Audio Check
             if [ "$CURRENT_MODE" = "normal" ]; then
                 NEW_AUDIO=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
-                if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then 
-                    log "Audio Change"
-                    kill $FFMPEG_PID 2>/dev/null
-                    [ -n "$ERROR_MONITOR_PID" ] && kill $ERROR_MONITOR_PID 2>/dev/null
-                    sleep 2
-                    FFMPEG_PID=""
-                    break
-                fi
+                if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then log "Audio Change"; kill $FFMPEG_PID 2>/dev/null; sleep 2; FFMPEG_PID=""; break; fi
             fi
 
             # 3. Connection Health Check (Every 3s)
             if [ $((LOOP_COUNT % 3)) -eq 0 ]; then
                 if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
-                   # Also check TCP connectivity as backup (when error monitor hasn't caught it yet)
                    if ! check_rtsp_basic; then
-                       log "[Fallback] RTSP Ping Failed - Switching to BRB..."
+                       log "[Fallback] RTSP Ping Failed - Killing PID $FFMPEG_PID..."
                        kill -9 $FFMPEG_PID 2>/dev/null
-                       [ -n "$ERROR_MONITOR_PID" ] && kill $ERROR_MONITOR_PID 2>/dev/null
                        break
                    fi
                 fi
@@ -560,15 +522,8 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         # FFmpeg Died/Killed Logic
         if [ -n "$FFMPEG_PID" ] && ! kill -0 $FFMPEG_PID 2>/dev/null; then
             wait $FFMPEG_PID 2>/dev/null; EXIT_CODE=$?
-            
-            # Check if error flag was set (means error monitor caught a critical error before FFmpeg died)
-            if [ -f "$FFMPEG_ERROR_FLAG" ]; then
-                log "[Fallback] Critical RTSP error caused crash (error flag set). Switching to BRB..."
-            elif [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
-                log "[Fallback] Stream died (Code $EXIT_CODE). Switching..."
-            fi
-            
             if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
+                log "[Fallback] Stream died (Code $EXIT_CODE). Switching..."
                 CURRENT_MODE="fallback"
                 echo "fallback" > "$STREAM_MODE_FILE"
             elif [ "$CURRENT_MODE" = "fallback" ]; then
