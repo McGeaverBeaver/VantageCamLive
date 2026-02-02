@@ -105,9 +105,9 @@ start_error_monitor() {
         # Follow FFmpeg's stderr via /proc - no pipes, no PID issues
         tail -f /proc/$ffmpeg_pid/fd/2 2>/dev/null | while IFS= read -r line; do
             # Only flag CRITICAL errors that mean stream is dead
-            if echo "$line" | grep -q "Error during demuxing:\|Error retrieving a packet.*Operation timed out\|Connection refused\|Connection reset by peer"; then
+            if echo "$line" | grep -qE "Error during demuxing:|Error retrieving a packet.*timed out|Connection refused|Connection reset"; then
                 echo "1" > "$FFMPEG_ERROR_FLAG"
-                log "[Error Monitor] Critical RTSP error detected"
+                log "[Error Monitor] Critical RTSP error detected: $line"
                 break
             fi
         done
@@ -482,6 +482,15 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         while kill -0 $FFMPEG_PID 2>/dev/null; do
             LOOP_COUNT=$((LOOP_COUNT + 1))
 
+            # 0. ERROR FLAG CHECK (ALWAYS check, highest priority, EVERY iteration)
+            # Triggered by background error monitor on critical RTSP errors like "Operation timed out"
+            if [ -f "$FFMPEG_ERROR_FLAG" ]; then
+                log "[Fallback] Critical RTSP Error Detected (from error monitor) - Switching to BRB..."
+                kill -9 $FFMPEG_PID 2>/dev/null
+                [ -n "$ERROR_MONITOR_PID" ] && kill $ERROR_MONITOR_PID 2>/dev/null
+                break
+            fi
+
             # 1. ZOMBIE CHECK (Size-Based) - Only in Normal Mode
             # Skip frozen detection for first 5 seconds after startup (initialization time)
             if [ "$CURRENT_MODE" = "normal" ]; then
@@ -522,17 +531,9 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             # 3. Connection Health Check (Every 3s)
             if [ $((LOOP_COUNT % 3)) -eq 0 ]; then
                 if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
-                   # Check error flag first (fastest detection)
-                   if [ -f "$FFMPEG_ERROR_FLAG" ]; then
-                       log "[Fallback] Critical RTSP Error Detected - Killing PID $FFMPEG_PID..."
-                       kill -9 $FFMPEG_PID 2>/dev/null
-                       [ -n "$ERROR_MONITOR_PID" ] && kill $ERROR_MONITOR_PID 2>/dev/null
-                       break
-                   fi
-                   
-                   # Also check TCP connectivity as backup
+                   # Also check TCP connectivity as backup (when error monitor hasn't caught it yet)
                    if ! check_rtsp_basic; then
-                       log "[Fallback] RTSP Ping Failed - Killing PID $FFMPEG_PID..."
+                       log "[Fallback] RTSP Ping Failed - Switching to BRB..."
                        kill -9 $FFMPEG_PID 2>/dev/null
                        [ -n "$ERROR_MONITOR_PID" ] && kill $ERROR_MONITOR_PID 2>/dev/null
                        break
