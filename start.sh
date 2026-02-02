@@ -339,8 +339,7 @@ fi
 # - err_detect: Ignore decode errors instead of failing
 # - thread_queue_size: Large queue for bursty network conditions
 # - timeout: 3 second timeout for initial connect and for reads (detect failures faster)
-# - stimeout: 3000000 microseconds (3 sec) socket timeout for detecting dead connections
-RTSP_INPUT_OPTS="-thread_queue_size 2048 -rtsp_transport tcp -buffer_size 4194304 -max_delay 500000 -fflags +genpts+discardcorrupt -err_detect ignore_err -timeout 3000000 -stimeout 3000000 -i $RTSP_SOURCE"
+RTSP_INPUT_OPTS="-thread_queue_size 2048 -rtsp_transport tcp -buffer_size 4194304 -max_delay 500000 -fflags +genpts+discardcorrupt -err_detect ignore_err -timeout 3000000 -i $RTSP_SOURCE"
 OVERLAY_INPUTS=""
 
 FILTER_CHAIN="$CAMERA_FILTER"
@@ -392,7 +391,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
     }
 
     run_fallback_ffmpeg() {
-        log "[Fallback] Starting 'We'll Be Right Back' stream (With Overlays)..."
+        log "[Fallback] Starting 'We'll Be Right Back' stream (With Overlays)..." >&2
 
         # BRB Input acts as Input 0
         local BRB_INPUT_OPTS="-loop 1 -re -i $FALLBACK_IMAGE"
