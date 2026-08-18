@@ -22,7 +22,7 @@
     &#xD;
     v2.8.2: Added PUID/PGID support for proper file ownership!</Overview>
   <Category>MediaApp:Video MediaServer:Video</Category>
-  <WebUI/>
+  <WebUI>http://[IP]:[PORT:9999]/</WebUI>
   <TemplateURL/>
   <Icon>https://raw.githubusercontent.com/McGeaverBeaver/VantageCamLive/main/icon.png</Icon>
   <ExtraParams>--device=/dev/dri:/dev/dri</ExtraParams>
@@ -114,7 +114,15 @@
   <!-- Fallback Mode -->
   <Config Name="Fallback Mode" Target="FALLBACK_ENABLED" Default="true" Mode="" Description="Show 'We'll Be Right Back' screen when camera RTSP is unreachable (keeps YouTube stream alive instead of going offline)" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
 
+  <!-- Admin WebUI -->
+  <Config Name="Admin WebUI Enabled" Target="ADMIN_WEBUI_ENABLED" Default="true" Mode="" Description="Enable the admin dashboard with live stream preview" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Preview FPS" Target="PREVIEW_FPS" Default="5" Mode="" Description="Preview frame rate (1-15). Lower = less CPU" Type="Variable" Display="advanced" Required="false" Mask="false">5</Config>
+  <Config Name="Preview Width" Target="PREVIEW_WIDTH" Default="960" Mode="" Description="Preview image width in pixels" Type="Variable" Display="advanced" Required="false" Mask="false">960</Config>
+  <Config Name="Preview Idle Timeout" Target="PREVIEW_IDLE_TIMEOUT" Default="120" Mode="" Description="Seconds without viewers before the preview auto-stops to save CPU" Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
+  <Config Name="Preview Low CPU Mode" Target="PREVIEW_LOW_CPU" Default="false" Mode="" Description="Decode keyframes only for the preview (choppier but much less CPU)" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+
   <!-- Ports -->
   <Config Name="RTSP Port" Target="8554" Default="8554" Mode="tcp" Description="RTSP output port (only if ENABLE_LOCAL_STREAM=true)" Type="Port" Display="always" Required="false" Mask="false">8554</Config>
   <Config Name="Audio API Port" Target="9998" Default="9998" Mode="tcp" Description="Audio control API port" Type="Port" Display="always" Required="false" Mask="false">9998</Config>
+  <Config Name="Admin WebUI Port" Target="9999" Default="9999" Mode="tcp" Description="Admin dashboard with live stream preview" Type="Port" Display="always" Required="false" Mask="false">9999</Config>
 </Container>

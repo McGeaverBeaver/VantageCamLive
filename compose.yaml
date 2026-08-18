@@ -20,8 +20,18 @@ services:
 
       # --- REQUIRED SETTINGS ---
       - RTSP_SOURCE=rtsp://user:pass@192.168.1.50:554/stream
+      # ADMIN_USER/ADMIN_PASS secure the Admin WebUI (and MediaMTX RTSP auth).
+      # The WebUI refuses to serve anything while the password is a known default.
       - ADMIN_USER=admin
       - ADMIN_PASS=change_me_please
+
+      # --- ADMIN WEBUI (dashboard + stream preview) ---
+      - ADMIN_WEBUI_ENABLED=true
+      # - ADMIN_PORT=9999
+      # - PREVIEW_FPS=5             # Preview frame rate (1-15)
+      # - PREVIEW_WIDTH=960         # Preview width in px
+      # - PREVIEW_IDLE_TIMEOUT=120  # Auto-stop preview after N seconds without viewers
+      # - PREVIEW_LOW_CPU=false     # true = decode keyframes only (big CPU saving)
 
       # --- HARDWARE ACCELERATION ---
       # Set to 'false' to use software encoding (no Intel GPU required)
@@ -150,6 +160,7 @@ services:
     ports:
       - 8554:8554  # Video Output (RTSP) - only if ENABLE_LOCAL_STREAM=true
       - 9998:9998  # Audio API
+      - 9999:9999  # Admin WebUI (dashboard + stream preview)
     restart: unless-stopped
 
   # ============================================================

@@ -1,4 +1,4 @@
-# VantageCam Live v2.8.5
+# VantageCam Live v2.9.0
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker Build](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml/badge.svg)](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml)
@@ -20,7 +20,8 @@ Transform a standard security camera feed into a professional broadcast without 
 ## 📋 Table of Contents
 
 - [Key Features](#-key-features)
-- [What's New in v2.8.5](#-whats-new-in-v285)
+- [What's New in v2.9.0](#-whats-new-in-v290)
+- [Admin WebUI & Stream Preview](#-admin-webui--stream-preview)
 - [Getting Started](#-getting-started)
 - [Docker Compose](#-docker-compose)
 - [Direct-to-YouTube Mode](#-direct-to-youtube-mode)
@@ -68,29 +69,82 @@ Transform a standard security camera feed into a professional broadcast without 
 
 ---
 
-## 🚀 What's New in v2.8.5
+## 🚀 What's New in v2.9.0
 
-### Music Streaming
-Stream background music to your live feed instead of camera audio! Perfect for adding ambiance to your stream.
+### 🖥️ Admin WebUI with Live Stream Preview
+A full browser dashboard on port **9999**:
 
-- **API Control** — Enable via `POST /audio/music` endpoint
-- **Playlist Support** — Place multiple MP3 files in `/config/music/` folder
-- **Auto-Loop** — Plays through all songs (1, 2, 3... N) then loops back to start
-- **Graceful Fallback** — Falls back to muted if no music files found
+- **Live Preview** — See the *exact* composed output (camera + sponsors + weather overlays) before/while it broadcasts, without touching the live pipeline
+- **Toggle to Save CPU** — The preview is a separate on-demand FFmpeg process; turn it off with one click, and it also auto-stops after 2 minutes with no viewers
+- **Full monitoring** — Stream mode, encoder stats, watchdog state, camera reachability, CPU/RAM
+- **One-click controls** — Audio mute/unmute/music, stream restart, weather refresh
+- **Sponsor manager** — Upload/delete logos per slot and day/night mode from the browser
+- **Log viewer** — Tail watchdog, FFmpeg, and weather logs
 
-```bash
-# Enable music mode
-curl -X POST -H "X-API-Key: KEY" http://IP:9998/audio/music
+See [Admin WebUI & Stream Preview](#-admin-webui--stream-preview).
 
-# Check current audio mode
-curl -H "X-API-Key: KEY" http://IP:9998/audio/status
-# Returns: {"audio": "music", "muted": false, "music": true}
-```
+### 🐛 Major Bug Fixes
+- **MediaMTX mode now reaches YouTube again** — the second FFmpeg leg (RTSP → YouTube) documented since v2.7 was lost in the v2.8.3 refactor; restored with full audio-mode support
+- **Watchdog backoff is now real** — the exponential backoff previously never delayed anything because the supervisor loop restarted FFmpeg instantly; the watchdog now publishes a restart hold that the loop honors
+- **Progress file growth capped** — `ffmpeg_progress.txt` grew ~10MB/day unbounded; frozen-stream detection is now mtime-based and the file is truncated periodically
+- **PUID + MediaMTX fixed** — the MediaMTX config was written to root-owned `/usr/local/bin` after privileges were dropped
+- **Container no longer permanently "unhealthy" without a YouTube key** — the Audio API (which the Docker healthcheck depends on) now always starts
+- **US NWS alerts now stack** — multiple simultaneous NWS alerts display like Environment Canada alerts (previously only the first showed)
+- **Border-town alert fix** — new `ALERT_COUNTRY=CA|US` override (the lat/lon heuristic misclassified Atlantic Canada as US and New England as Canada)
 
-### Automated Docker Builds
-- GitHub Actions workflow now automatically builds and pushes Docker images
-- Images available at `ghcr.io/mcgeaverbeaver/vantagecamlive:latest`
-- Separate ARM64 builds available (`:latest-arm64`)
+### 🔒 Security Hardening
+- Admin WebUI refuses to serve while `ADMIN_PASS` is empty or a shipped default
+- Timing-safe API-key comparison in the Audio API; threaded server so a stalled client can't wedge the Docker healthcheck
+- PID-reuse guards before any signal is sent from the APIs or watchdog
+- PHP status endpoint: unpredictable cache path + atomic cache writes
+
+---
+
+## 🖥️ Admin WebUI & Stream Preview
+
+Open `http://<host>:9999/` and log in with `ADMIN_USER` / `ADMIN_PASS`.
+
+> 🔒 The WebUI **refuses all requests** until `ADMIN_PASS` is set to something
+> other than the shipped defaults. Keep port 9999 on your LAN — don't port-forward
+> it to the internet (put it behind a reverse proxy with TLS if you need remote access).
+
+### Live Preview
+
+The preview spawns a **separate low-FPS FFmpeg pipeline** that composes the same
+overlay playlists as the broadcast (sponsors top-left/top-right, weather
+bottom-right, identical scaling) and serves it as MJPEG to your browser.
+
+- The broadcast pipeline is **never touched** — start/stop the preview freely
+- Auto-stops after `PREVIEW_IDLE_TIMEOUT` seconds with no viewers (default 120)
+- **Auto source** mirrors the broadcast: shows the BRB screen when in fallback mode
+- Preview the **BRB screen** on demand to check your fallback branding before an outage happens
+- Works even before `YOUTUBE_KEY` is set — dial in your overlays *before* you go live
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `ADMIN_WEBUI_ENABLED` | `true` | Enable the dashboard |
+| `ADMIN_PORT` | `9999` | Dashboard port |
+| `PREVIEW_FPS` | `5` | Preview frame rate (1–15) |
+| `PREVIEW_WIDTH` | `960` | Preview width in pixels |
+| `PREVIEW_QUALITY` | `6` | MJPEG quality (2 best – 31 worst) |
+| `PREVIEW_IDLE_TIMEOUT` | `120` | Seconds without viewers before auto-stop |
+| `PREVIEW_LOW_CPU` | `false` | Decode keyframes only (~1 fps, big CPU saving on 4K cams) |
+
+### API Endpoints (all require Basic auth)
+
+| Endpoint | Method | Description |
+|:---------|:-------|:------------|
+| `/api/status` | GET | Full status JSON (stream, camera, audio, watchdog, system) |
+| `/api/preview/start?source=auto\|camera\|brb` | POST | Start the preview pipeline |
+| `/api/preview/stop` | POST | Stop it (frees the CPU immediately) |
+| `/api/preview/stream` | GET | MJPEG stream |
+| `/api/preview/snapshot` | GET | Single JPEG frame |
+| `/api/audio/{mute,unmute,music,toggle}` | POST | Audio control |
+| `/api/stream/restart` | POST | Restart the broadcast FFmpeg |
+| `/api/weather/refresh` | POST | Regenerate the weather overlay now |
+| `/api/ads` / `/api/ads/upload` / `/api/ads/delete` | GET/POST | Sponsor logo management |
+| `/api/logs?name=watchdog\|ffmpeg\|weather` | GET | Tail logs |
+| `/api/overlay/{weather,tl,tr,fallback}` | GET | Current overlay PNGs (zero CPU) |
 
 ---
 
@@ -118,6 +172,7 @@ Create a folder on your host for persistent data. The container auto-creates sub
 ├── music/               # MP3 files for music streaming mode
 ├── weather_icons/       # Auto-downloaded weather icons
 ├── watchdog.log         # Self-healing activity log
+├── ffmpeg.log           # FFmpeg stderr (viewable in the Admin WebUI)
 ├── watchdog_state.json  # Persistent watchdog state
 ├── audio_mode           # Current audio: "muted", "unmuted", or "music"
 └── stream_mode          # Current mode: "normal" or "fallback"
@@ -191,6 +246,7 @@ services:
     ports:
       - 8554:8554  # RTSP (if ENABLE_LOCAL_STREAM=true)
       - 9998:9998  # Audio API
+      - 9999:9999  # Admin WebUI (dashboard + stream preview)
     restart: unless-stopped
 ```
 
@@ -532,6 +588,7 @@ Long-duration events (Heat Waves, Air Quality Statements) display in a compact f
 | `WEATHER_TIMEZONE` | `America/Toronto` | Timezone |
 | `CAMERA_HEADING` | `N` | Wind arrow direction |
 | `ALERTS_UPDATE_INTERVAL` | `900` | Update interval (seconds) |
+| `ALERT_COUNTRY` | auto | Force alert source: `CA` (Environment Canada) or `US` (NWS). Recommended near the border. |
 
 ### Sponsor Overlays
 
@@ -655,6 +712,32 @@ The playlist plays all MP3 files in alphabetical order, then loops back to the b
 ---
 
 ## 📜 Changelog
+
+### v2.9.0 - Admin WebUI, Stream Preview & Reliability Overhaul
+
+**New Features:**
+- **Admin WebUI** (port 9999) — browser dashboard with live status, controls, sponsor management, and log viewer. Secured with `ADMIN_USER`/`ADMIN_PASS` (refuses to serve on default/empty passwords).
+- **Live Stream Preview** — on-demand, low-FPS MJPEG preview of the exact composed output (overlays included) via a separate FFmpeg pipeline. Toggle off (or let it auto-stop after `PREVIEW_IDLE_TIMEOUT`) to save CPU. Preview the camera or the BRB screen, even before a YouTube key is configured.
+- **FFmpeg log capture** — encoder stderr is tee'd to `/config/ffmpeg.log` (bounded, auto-trimmed) and viewable in the WebUI.
+- **On-demand weather refresh** — regenerate the weather/alert overlay from the WebUI instead of waiting for the next cycle.
+- **`ALERT_COUNTRY` override** — force `CA` or `US` alert sources near the border.
+
+**Fixed:**
+- **MediaMTX mode never pushed to YouTube** — the documented second FFmpeg leg (local RTSP → YouTube) was lost in the v2.8.3 refactor. Restored with muted/unmuted/music audio support.
+- **Watchdog exponential backoff was a no-op** — start.sh restarted FFmpeg instantly after the watchdog killed it. The watchdog now writes a restart hold that the supervisor honors.
+- **`ffmpeg_progress.txt` grew unbounded** (~10MB/day). Frozen-stream detection is now mtime-based and the file is truncated hourly past 10MB; the watchdog and healthcheck read only the file tail.
+- **MediaMTX + PUID broken** — the generated config was written to root-owned `/usr/local/bin` after privileges were dropped; now written to `/tmp`.
+- **Container reported "unhealthy" when no `YOUTUBE_KEY` was set** — the Docker healthcheck requires the Audio API, which only started with a key. It now always starts.
+- **Only the first NWS alert displayed** — US alerts now stack like Environment Canada alerts.
+- **Country detection misclassified border regions** — Atlantic Canada was treated as US, New England as Canada; box refined + explicit override added.
+- **Stale-PID hazards** — audio API, admin API, and watchdog verify the target process is actually FFmpeg before signaling (guards against PID reuse after reboots).
+
+**Security:**
+- Timing-safe API-key comparison (Audio API) and Basic-auth credential comparison (Admin WebUI).
+- Audio API switched to a threaded server so a slow client can't block the Docker healthcheck endpoint.
+- Ad uploads are extension-whitelisted, size-capped, path-traversal-proofed, and validated as real images.
+- PHP status endpoint: per-install cache path (no predictable `/tmp` name) and atomic cache writes.
+- `.dockerignore` actually works now (the file was previously named `dockerignore` and ignored by Docker).
 
 ### v2.8.5 - Music Streaming & CI/CD
 

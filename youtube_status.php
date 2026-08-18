@@ -18,7 +18,9 @@
 define('CONFIG_PATH', '/config/etc/vantagecam/youtube_config.php');
 
 // Cache settings (avoid hammering YouTube API - you get 10,000 quota units/day)
-define('CACHE_FILE', '/tmp/youtube_status_cache.json');
+// Cache path is derived from this script's location so it is not a predictable
+// world-writable /tmp name (avoids symlink/pre-creation attacks on shared hosts).
+define('CACHE_FILE', sys_get_temp_dir() . '/yt_status_' . md5(__FILE__) . '.json');
 define('CACHE_TTL', 60); // seconds - check YouTube every 60 seconds max
 
 // ============================================================================
@@ -55,6 +57,24 @@ if (file_exists(CACHE_FILE)) {
     $cache = json_decode(file_get_contents(CACHE_FILE), true);
     if ($cache && isset($cache['timestamp']) && (time() - $cache['timestamp']) < CACHE_TTL) {
         echo json_encode($cache['data']);
+        exit;
+    }
+}
+
+// Stampede protection: only ONE request refreshes from the YouTube API at a
+// time; concurrent requests serve the stale cache instead of burning quota.
+$lockHandle = fopen(CACHE_FILE . '.lock', 'c');
+if ($lockHandle && !flock($lockHandle, LOCK_EX | LOCK_NB)) {
+    if (isset($cache['data'])) {
+        echo json_encode($cache['data']);
+        exit;
+    }
+    // No stale cache available - wait for the refresher to finish
+    flock($lockHandle, LOCK_EX);
+    $fresh = json_decode(@file_get_contents(CACHE_FILE), true);
+    flock($lockHandle, LOCK_UN);
+    if (isset($fresh['data'])) {
+        echo json_encode($fresh['data']);
         exit;
     }
 }
@@ -163,5 +183,10 @@ function cacheResult($data) {
         'timestamp' => time(),
         'data' => $data
     ];
-    file_put_contents(CACHE_FILE, json_encode($cache));
+    // Atomic write: never leaves a half-written cache for concurrent requests
+    $tmp = CACHE_FILE . '.' . getmypid() . '.tmp';
+    if (file_put_contents($tmp, json_encode($cache), LOCK_EX) !== false) {
+        @chmod($tmp, 0600);
+        @rename($tmp, CACHE_FILE);
+    }
 }

@@ -4,7 +4,7 @@ FROM alpine:3.19
 ARG INCLUDE_INTEL=true
 ARG ARCH=amd64
 ARG MTX_VERSION=v1.15.0
-ARG VERSION=2.8.6
+ARG VERSION=2.9.0
 
 # Image metadata
 LABEL maintainer="McGeaverBeaver"
@@ -61,8 +61,10 @@ COPY start.sh /start.sh
 COPY weather.py /weather.py
 COPY audio_api.py /audio_api.py
 COPY watchdog.py /watchdog.py
-RUN sed -i 's/\r$//' /start.sh /weather.py /audio_api.py /watchdog.py \
-    && chmod +x /start.sh /watchdog.py
+COPY admin_api.py /admin_api.py
+COPY admin_ui.html /admin_ui.html
+RUN sed -i 's/\r$//' /start.sh /weather.py /audio_api.py /watchdog.py /admin_api.py \
+    && chmod +x /start.sh /watchdog.py /admin_api.py
 
 # 6. Create config directory and health check script
 RUN mkdir -p /config /health
@@ -100,8 +102,9 @@ if [ -f "$PROGRESS_FILE" ]; then
         exit 1
     fi
     
-    # Level 4: Check if frames are advancing
-    FRAME=$(grep "^frame=" "$PROGRESS_FILE" 2>/dev/null | tail -1 | cut -d= -f2)
+    # Level 4: Check if frames are advancing (read only the tail - the
+    # progress file can be large on long runs)
+    FRAME=$(tail -c 8192 "$PROGRESS_FILE" 2>/dev/null | grep "^frame=" | tail -1 | cut -d= -f2)
     LAST_FRAME_FILE="/tmp/health_last_frame"
     
     if [ -n "$FRAME" ] && [ -f "$LAST_FRAME_FILE" ]; then
@@ -120,8 +123,8 @@ echo "OK"
 exit 0
 EOF
 
-# 8. Expose ports
-EXPOSE 8554 9998
+# 8. Expose ports (8554 RTSP, 9998 Audio API, 9999 Admin WebUI)
+EXPOSE 8554 9998 9999
 
 # 9. Health check - monitors actual stream health
 # - interval: Check every 45 seconds

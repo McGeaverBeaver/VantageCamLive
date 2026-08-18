@@ -23,7 +23,7 @@ import random
 import subprocess
 import socket
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 from urllib.parse import urlencode, urlparse
@@ -67,6 +67,7 @@ PROGRESS_FILE = "/config/ffmpeg_progress.txt"
 WATCHDOG_STATE_FILE = "/config/watchdog_state.json"
 LOG_FILE = "/config/watchdog.log"
 STREAM_MODE_FILE = "/config/stream_mode"  # Tracks "normal" or "fallback"
+RESTART_HOLD_FILE = "/config/restart_hold"  # Epoch timestamp start.sh waits for before respawn
 
 # ==============================================================================
 #  LOGGING SETUP
@@ -88,21 +89,17 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 
 def parse_rtsp_url(rtsp_url):
-    """Parse RTSP URL to extract host and port"""
+    """Parse RTSP URL to extract host and port.
+
+    Splits on the LAST '@' so passwords containing '@' or ':' don't shift
+    the host."""
     try:
-        # Handle rtsp://user:pass@host:port/path format
-        if '@' in rtsp_url:
-            # Split off credentials
-            parts = rtsp_url.split('@')
-            host_part = parts[1]
-        else:
-            host_part = rtsp_url.replace('rtsp://', '')
+        host_part = rtsp_url.split('://', 1)[-1]
+        # Split off credentials on the LAST '@'
+        host_part = host_part.rsplit('@', 1)[-1]
 
         # Extract host and port
-        if '/' in host_part:
-            host_port = host_part.split('/')[0]
-        else:
-            host_port = host_part
+        host_port = host_part.split('/', 1)[0]
 
         if ':' in host_port:
             host, port = host_port.rsplit(':', 1)
@@ -115,6 +112,15 @@ def parse_rtsp_url(rtsp_url):
     except Exception as e:
         logger.error(f"Failed to parse RTSP URL: {e}")
         return None, None
+
+
+def mask_rtsp_url(url):
+    """Mask credentials for logging. Splits on the LAST '@' so no password
+    fragment can leak when the password itself contains '@'."""
+    if not url or '@' not in url:
+        return url
+    protocol = url.split('://', 1)[0] if '://' in url else 'rtsp'
+    return f"{protocol}://***@{url.rsplit('@', 1)[1]}"
 
 
 def check_rtsp_source_health():
@@ -134,12 +140,7 @@ def check_rtsp_source_health():
         return 'unknown'
 
     # Mask credentials in log output
-    safe_url = RTSP_SOURCE
-    if '@' in safe_url:
-        # Replace user:pass with ***
-        parts = safe_url.split('@')
-        protocol = parts[0].split('://')[0]
-        safe_url = f"{protocol}://***@{parts[1]}"
+    safe_url = mask_rtsp_url(RTSP_SOURCE)
 
     logger.info(f"Checking RTSP source: {safe_url} ({host}:{port})")
 
@@ -253,7 +254,7 @@ def send_discord_alert(title, message, color=16711680, mention_user=True):
             "title": title,
             "description": message,
             "color": color,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "footer": {"text": "VantageCam Watchdog"}
         }
 
@@ -664,36 +665,44 @@ def check_ffmpeg_progress():
             logger.warning(f"Progress file is {file_age:.0f}s old - FFmpeg may be stalled")
             return False
 
-        # Check frame count advancement
-        with open(PROGRESS_FILE, 'r') as f:
-            content = f.read()
+        # Check frame count advancement (read only the tail - the progress file
+        # can grow large on long runs)
+        with open(PROGRESS_FILE, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 8192))
+            content = f.read().decode('utf-8', 'replace')
 
-        # Look for frame count
+        # Look for the most recent frame count
+        frame = None
         for line in content.split('\n'):
             if line.startswith('frame='):
-                frame = int(line.split('=')[1])
+                try:
+                    frame = int(line.split('=')[1])
+                except ValueError:
+                    continue
+        if frame is not None:
+            # Compare to last known frame
+            last_frame_file = "/tmp/watchdog_last_frame"
+            last_frame = 0
+            if os.path.exists(last_frame_file):
+                with open(last_frame_file, 'r') as f:
+                    try:
+                        last_frame = int(f.read().strip())
+                    except ValueError:
+                        pass
 
-                # Compare to last known frame
-                last_frame_file = "/tmp/watchdog_last_frame"
-                last_frame = 0
-                if os.path.exists(last_frame_file):
-                    with open(last_frame_file, 'r') as f:
-                        try:
-                            last_frame = int(f.read().strip())
-                        except:
-                            pass
+            # Save current frame
+            with open(last_frame_file, 'w') as f:
+                f.write(str(frame))
 
-                # Save current frame
-                with open(last_frame_file, 'w') as f:
-                    f.write(str(frame))
+            # If frame hasn't advanced and file is > 10s old, stalled
+            if frame == last_frame and file_age > 10:
+                logger.warning(f"FFmpeg stalled at frame {frame}")
+                return False
 
-                # If frame hasn't advanced and file is > 10s old, stalled
-                if frame == last_frame and file_age > 10:
-                    logger.warning(f"FFmpeg stalled at frame {frame}")
-                    return False
-
-                logger.debug(f"FFmpeg progress: frame={frame}, age={file_age:.1f}s")
-                return True
+            logger.debug(f"FFmpeg progress: frame={frame}, age={file_age:.1f}s")
+            return True
 
         return True  # Progress file exists but no frame info yet
 
@@ -706,12 +715,17 @@ def check_ffmpeg_progress():
 # ==============================================================================
 
 def get_ffmpeg_pid():
-    """Get the FFmpeg PID from the PID file"""
+    """Get the FFmpeg PID from the PID file (only if that PID is really an
+    FFmpeg process - guards against stale files and PID reuse)."""
     try:
         if os.path.exists(PID_FILE):
             with open(PID_FILE, 'r') as f:
-                return int(f.read().strip())
-    except (ValueError, FileNotFoundError):
+                pid = int(f.read().strip())
+            with open(f"/proc/{pid}/cmdline", 'rb') as f:
+                if b'ffmpeg' in f.read():
+                    return pid
+            logger.warning(f"PID file points to non-ffmpeg process {pid} - ignoring")
+    except (ValueError, FileNotFoundError, OSError):
         pass
     return None
 
@@ -784,7 +798,9 @@ def get_backoff_delay():
     """
     Calculate backoff delay with exponential increase and jitter.
     """
-    base_delay = INITIAL_DELAY * (2 ** state.attempt)
+    # Cap the exponent: a persisted attempt counter in the hundreds would
+    # otherwise overflow float conversion and crash the watchdog loop.
+    base_delay = INITIAL_DELAY * (2 ** min(state.attempt, 20))
 
     # Add jitter (+/-30%)
     jitter = base_delay * 0.3
@@ -850,21 +866,15 @@ def wait_for_rtsp_source(max_wait=300):
 def restart_stream():
     """
     Initiate stream restart by stopping FFmpeg and letting start.sh restart it.
-
-    v2.8.1: Now checks RTSP source before attempting restart
+    Returns True if a restart was actually initiated, False if it was skipped
+    (e.g. RTSP source still down) so the caller can skip verification.
     """
     logger.info("=" * 50)
     logger.info("INITIATING STREAM RESTART")
     logger.info("=" * 50)
 
-    state.increment_attempt()
-    logger.info(f"Attempt #{state.attempt} - Total restarts: {state.total_restarts}")
-
-    # Calculate backoff delay
-    delay = get_backoff_delay()
-    logger.info(f"Calculated backoff delay: {delay} seconds")
-
-    # NEW: Check RTSP source health before restarting
+    # Check RTSP source health before restarting (and before inflating the
+    # backoff counter - a skipped restart is not an attempt)
     if RTSP_CHECK_ENABLED and RTSP_SOURCE:
         logger.info("Checking RTSP source health before restart...")
         rtsp_status = check_rtsp_source_health()
@@ -874,11 +884,7 @@ def restart_stream():
 
             # Send alert if this is first detection
             if not state.rtsp_was_down:
-                safe_url = RTSP_SOURCE
-                if '@' in safe_url:
-                    parts = safe_url.split('@')
-                    protocol = parts[0].split('://')[0]
-                    safe_url = f"{protocol}://***@{parts[1]}"
+                safe_url = mask_rtsp_url(RTSP_SOURCE)
 
                 alert_credential_error('rtsp_down',
                     f"RTSP Source: {safe_url}\n"
@@ -888,20 +894,37 @@ def restart_stream():
             # Wait for RTSP to come back (up to 5 minutes)
             if not wait_for_rtsp_source(300):
                 logger.warning("RTSP source still unreachable - will retry on next loop")
-                return
+                return False
         else:
             logger.info("RTSP source is healthy, proceeding with restart")
+
+    state.increment_attempt()
+    logger.info(f"Attempt #{state.attempt} - Total restarts: {state.total_restarts}")
+
+    # Calculate backoff delay
+    delay = get_backoff_delay()
+    logger.info(f"Calculated backoff delay: {delay} seconds")
+
+    # Publish the hold so start.sh's supervision loop actually waits out the
+    # backoff before respawning FFmpeg (previously it restarted instantly,
+    # making the exponential backoff a no-op).
+    try:
+        with open(RESTART_HOLD_FILE, 'w') as f:
+            f.write(str(int(time.time() + delay)))
+    except OSError as e:
+        logger.warning(f"Could not write restart hold file: {e}")
 
     # Stop FFmpeg
     stop_ffmpeg_gracefully()
 
-    # Wait for backoff period
+    # Wait for backoff period (start.sh honors the hold file in parallel)
     logger.info(f"Waiting {delay} seconds before allowing FFmpeg restart...")
     time.sleep(delay)
 
     # FFmpeg will auto-restart via start.sh loop
     logger.info("FFmpeg should auto-restart via start.sh loop")
     logger.info("=" * 50)
+    return True
 
 
 def verify_stream_recovery():
@@ -1009,11 +1032,7 @@ def run_watchdog():
         return
 
     # Mask RTSP credentials for logging
-    safe_rtsp = RTSP_SOURCE
-    if RTSP_SOURCE and '@' in RTSP_SOURCE:
-        parts = RTSP_SOURCE.split('@')
-        protocol = parts[0].split('://')[0]
-        safe_rtsp = f"{protocol}://***@{parts[1]}"
+    safe_rtsp = mask_rtsp_url(RTSP_SOURCE)
 
     logger.info("=" * 50)
     logger.info("VANTAGECAM SELF-HEALING WATCHDOG v2.8.1 STARTED")
@@ -1049,6 +1068,7 @@ def run_watchdog():
     time.sleep(STARTUP_DELAY)
 
     consecutive_offline = 0
+    consecutive_live = 0
     last_public_check = datetime.now() - timedelta(hours=1)  # Force initial check
     alerted_offline = False  # Track if we've already sent offline alert
 
@@ -1066,16 +1086,14 @@ def run_watchdog():
                             f"Total restarts this session: {state.total_restarts}")
                         alerted_offline = False
                 consecutive_offline = 0
+                consecutive_live += 1
 
-                # Check if we've been stable long enough to reset backoff
-                if state.last_healthy:
-                    time_since_healthy = (datetime.now() - state.last_healthy).total_seconds()
-                    if time_since_healthy < STABILITY_THRESHOLD and state.attempt > 0:
-                        pass  # Still in recovery validation
-                else:
-                    state.reset_backoff()
-
-                if state.attempt > 0:
+                if state.attempt == 0:
+                    state.reset_backoff()  # Refresh last_healthy timestamp
+                elif consecutive_live * CHECK_INTERVAL >= STABILITY_THRESHOLD:
+                    # Only reset the backoff after the stream has stayed live
+                    # for the stability window (a single lucky poll used to
+                    # reset it immediately, defeating the threshold)
                     state.reset_backoff()
                     logger.info("Backoff counter reset after stable connection")
 
@@ -1086,6 +1104,7 @@ def run_watchdog():
 
             elif status == 'offline':
                 consecutive_offline += 1
+                consecutive_live = 0
                 logger.warning(f"Stream OFFLINE (consecutive: {consecutive_offline})")
 
                 # Require 2 consecutive offline checks before restart (to avoid false positives)
@@ -1094,8 +1113,9 @@ def run_watchdog():
                     if is_fallback_mode():
                         logger.info("In fallback mode - start.sh is handling camera recovery, skipping watchdog restart")
                         consecutive_offline = 0  # Reset counter since this is expected
+                        time.sleep(CHECK_INTERVAL)
                         continue
-                    
+
                     logger.warning("Stream confirmed OFFLINE - initiating recovery")
 
                     # Send Discord alert (only once per offline event)
@@ -1105,10 +1125,8 @@ def run_watchdog():
                             f"Attempt #{state.attempt + 1}")
                         alerted_offline = True
 
-                    restart_stream()
-
-                    # Verify recovery
-                    if verify_stream_recovery():
+                    # Verify recovery only if a restart actually happened
+                    if restart_stream() and verify_stream_recovery():
                         consecutive_offline = 0
 
                         # Ensure broadcast is PUBLIC after recovery

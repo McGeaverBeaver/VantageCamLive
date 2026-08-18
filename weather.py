@@ -67,9 +67,16 @@ def log(message):
         except: pass
 
 def detect_country():
+    # Explicit override wins: the lat/lon box heuristic below cannot cleanly
+    # separate southern Ontario/Quebec from New England, or the Maritimes from
+    # Maine. Set ALERT_COUNTRY=CA or ALERT_COUNTRY=US if you are near the border.
+    override = os.getenv("ALERT_COUNTRY", "").upper().strip()
+    if override in ("CA", "US"):
+        return override
     if 41.0 < LAT < 83.0 and -141.0 < LON < -50.0:
-        if LAT < 49.0 and -85.0 < LON < -70.0: return "CA"
         if LAT >= 49.0: return "CA"
+        if -85.0 < LON < -70.0: return "CA"   # southern Ontario / Quebec
+        if -70.0 <= LON < -59.0 and LAT > 43.4: return "CA"  # Maritimes (approx)
     return "US"
 
 @lru_cache(maxsize=32)
@@ -449,14 +456,20 @@ async def fetch_ec_alert():
         return alerts[0]
     return None, None, None, None, None
 
-def fetch_nws_alert():
+def fetch_nws_alerts():
+    """
+    Fetch ALL active NWS alerts for the location (mirrors fetch_ec_alerts).
+    Returns list of tuples: [(title, color, issued_text, alert_type, severity), ...]
+    """
     try:
         url = f"https://api.weather.gov/alerts/active?point={LAT},{LON}"
         headers = {'User-Agent': 'VantageCamLive/3.0'}
         resp = requests.get(url, headers=headers, timeout=10)
         data = resp.json()
-        if 'features' in data and len(data['features']) > 0:
-            props = data['features'][0]['properties']
+
+        alerts = []
+        for feature in data.get('features', []):
+            props = feature.get('properties', {})
             title = props.get('event', 'WEATHER ALERT').upper()
             nws_severity = props.get('severity', 'Severe')
 
@@ -478,11 +491,19 @@ def fetch_nws_alert():
                 except:
                     pass
 
-            return title, base_color, issued_text, alert_type, severity
-        return None, None, None, None, None
+            alerts.append((title, base_color, issued_text, alert_type, severity))
+        return alerts
     except Exception as e:
         if DEBUG_MODE: log(f"[NWS-Alert] Error: {e}")
-        return None, None, None, None, None
+        return []
+
+
+def fetch_nws_alert():
+    """Legacy function - returns only first alert for backward compatibility"""
+    alerts = fetch_nws_alerts()
+    if alerts:
+        return alerts[0]
+    return None, None, None, None, None
 
 def draw_watch_pattern(draw, x_offset, y_offset, width, height, border_color, line_width=3):
     """Draw dashed border for WATCH alerts within a specific region"""
@@ -637,16 +658,11 @@ def generate_alert_layer(width=900, height=150, flash_state="on"):
     """
     country = detect_country()
 
-    # Fetch ALL alerts
+    # Fetch ALL alerts (both EC and NWS support multi-alert stacking)
     if country == "CA":
         alerts = asyncio.run(fetch_ec_alerts()) if HAS_EC else []
     else:
-        # NWS single alert (legacy) - wrap in list
-        single_result = fetch_nws_alert()
-        if single_result and single_result[0]:
-            alerts = [single_result]
-        else:
-            alerts = []
+        alerts = fetch_nws_alerts()
 
     # No alerts - return transparent image
     if not alerts:

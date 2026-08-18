@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VantageCam Admin</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2129; --border: #2d333b;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --green: #3fb950;
+    --red: #f85149; --orange: #d29922; --radius: 10px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 14px 22px; background: var(--panel); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+  .pill {
+    padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--border); background: var(--panel2); color: var(--muted);
+  }
+  .pill.live { background: rgba(63,185,80,.15); color: var(--green); border-color: var(--green); }
+  .pill.warn { background: rgba(210,153,34,.15); color: var(--orange); border-color: var(--orange); }
+  .pill.err  { background: rgba(248,81,73,.15); color: var(--red); border-color: var(--red); }
+  .spacer { flex: 1; }
+  main { max-width: 1400px; margin: 0 auto; padding: 20px; display: grid; gap: 18px; }
+  .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .panel-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel2);
+  }
+  .panel-head h2 { font-size: 14px; font-weight: 600; }
+  .panel-body { padding: 16px; }
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 14px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.danger { color: var(--red); }
+  button.danger:hover { border-color: var(--red); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  select, input[type=file] {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 8px; font-size: 13px;
+  }
+  /* Preview */
+  #previewBox {
+    position: relative; background: #000; border-radius: 6px; overflow: hidden;
+    aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center;
+  }
+  #previewBox img { width: 100%; height: 100%; object-fit: contain; display: none; }
+  #previewOffMsg { color: var(--muted); text-align: center; padding: 30px; max-width: 460px; }
+  #previewOffMsg b { color: var(--text); }
+  .preview-stats { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: 12px; }
+  .preview-stats b { color: var(--text); font-weight: 600; }
+  /* Key-value tables */
+  table.kv { width: 100%; border-collapse: collapse; }
+  table.kv td { padding: 4px 0; vertical-align: top; }
+  table.kv td:first-child { color: var(--muted); width: 46%; padding-right: 10px; }
+  table.kv td:last-child { text-align: right; font-variant-numeric: tabular-nums; word-break: break-all; }
+  .ok { color: var(--green); } .bad { color: var(--red); } .mid { color: var(--orange); }
+  /* Overlays */
+  .overlay-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  .overlay-item { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+  .overlay-item img { width: 100%; border-radius: 4px; background: repeating-conic-gradient(#222 0% 25%, #333 0% 50%) 0 0/16px 16px; }
+  .overlay-item .cap { font-size: 12px; color: var(--muted); margin-top: 6px; text-align: center; }
+  /* Ads */
+  .ad-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ad-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); margin-top: 12px; }
+  .ad-item { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; text-align: center; }
+  .ad-item img { width: 100%; height: 90px; object-fit: contain; background: repeating-conic-gradient(#222 0% 25%, #333 0% 50%) 0 0/16px 16px; border-radius: 4px; }
+  .ad-item .name { font-size: 11px; color: var(--muted); margin: 6px 0; word-break: break-all; }
+  .upload-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  /* Logs */
+  #logView {
+    background: #0a0d12; border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px; font: 12px/1.5 ui-monospace, "Cascadia Code", Menlo, monospace;
+    height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all; color: #9da9b5;
+  }
+  #toast {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 18px; font-size: 13px; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 50;
+    max-width: 90vw;
+  }
+  #toast.show { opacity: 1; }
+  .muted { color: var(--muted); font-size: 12px; }
+  @media (max-width: 700px) { main { padding: 12px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>&#128249; VantageCam <span>Admin</span></h1>
+  <span class="pill" id="pillStream">…</span>
+  <span class="pill" id="pillMode">…</span>
+  <span class="pill" id="pillCamera">…</span>
+  <span class="pill" id="pillAudio">…</span>
+  <span class="spacer"></span>
+  <button id="btnRestart" class="danger" title="Signals the broadcast FFmpeg to restart (the supervisor loop respawns it within seconds)">&#8635; Restart Stream</button>
+</header>
+
+<main>
+  <!-- PREVIEW -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>&#127916; Stream Preview</h2>
+      <span class="muted">exactly what goes to air &mdash; camera + sponsor + weather overlays</span>
+      <span class="spacer"></span>
+      <select id="previewSource" title="Preview source">
+        <option value="auto">Auto (mirror broadcast)</option>
+        <option value="camera">Camera</option>
+        <option value="brb">BRB screen</option>
+      </select>
+      <button id="btnPreviewStart" class="primary">&#9654; Start Preview</button>
+      <button id="btnPreviewStop" disabled>&#9632; Stop Preview</button>
+    </div>
+    <div class="panel-body">
+      <div id="previewBox">
+        <img id="previewImg" alt="stream preview">
+        <div id="previewOffMsg">
+          <b>Preview is off.</b><br>
+          Starting it spawns a separate low-FPS FFmpeg pipeline that composes the
+          same overlays as the broadcast &mdash; the live stream is never touched.
+          It stops automatically after <span id="idleTimeoutLabel">120</span>s
+          without viewers to save CPU cycles.
+        </div>
+      </div>
+      <div class="preview-stats" id="previewStats"></div>
+    </div>
+  </div>
+
+  <!-- STATUS CARDS -->
+  <div class="grid">
+    <div class="panel">
+      <div class="panel-head"><h2>&#128225; Broadcast</h2></div>
+      <div class="panel-body"><table class="kv" id="tblStream"></table></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>&#128247; Camera</h2></div>
+      <div class="panel-body"><table class="kv" id="tblCamera"></table></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>&#128266; Audio</h2></div>
+      <div class="panel-body">
+        <table class="kv" id="tblAudio"></table>
+        <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap">
+          <button data-audio="muted">&#128263; Mute</button>
+          <button data-audio="unmuted">&#128264; Camera Audio</button>
+          <button data-audio="music">&#127925; Music</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>&#128737;&#65039; Watchdog</h2></div>
+      <div class="panel-body"><table class="kv" id="tblWatchdog"></table></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>&#128421;&#65039; System</h2></div>
+      <div class="panel-body"><table class="kv" id="tblSystem"></table></div>
+    </div>
+  </div>
+
+  <!-- OVERLAYS -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>&#127912; Current Overlays</h2>
+      <span class="muted">served straight from disk &mdash; zero encoding cost</span>
+      <span class="spacer"></span>
+      <button id="btnWeatherRefresh">&#8635; Refresh Weather Now</button>
+      <button id="btnOverlayReload">&#128260; Reload Images</button>
+    </div>
+    <div class="panel-body">
+      <div class="overlay-grid" id="overlayGrid"></div>
+    </div>
+  </div>
+
+  <!-- SPONSORS -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>&#128226; Sponsor Logos</h2>
+      <span class="spacer"></span>
+      <div class="ad-tabs">
+        <button class="ad-tab active" data-slot="topleft" data-mode="DAY">TL &middot; Day</button>
+        <button class="ad-tab" data-slot="topleft" data-mode="NIGHT">TL &middot; Night</button>
+        <button class="ad-tab" data-slot="topright" data-mode="DAY">TR &middot; Day</button>
+        <button class="ad-tab" data-slot="topright" data-mode="NIGHT">TR &middot; Night</button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <div class="ad-grid" id="adGrid"></div>
+      <div class="upload-row">
+        <input type="file" id="adFile" accept=".png,.jpg,.jpeg,.webp">
+        <button id="btnAdUpload" class="primary">&#8679; Upload to <span id="uploadTargetLabel">TL &middot; Day</span></button>
+        <span class="muted">PNG / JPG / WebP &middot; max 15&nbsp;MB &middot; picked up on next rotation</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOGS -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>&#128220; Logs</h2>
+      <span class="spacer"></span>
+      <select id="logName">
+        <option value="watchdog">watchdog.log</option>
+        <option value="ffmpeg">ffmpeg.log</option>
+        <option value="weather">weather_debug.log</option>
+      </select>
+      <label class="muted"><input type="checkbox" id="logAuto"> auto-refresh</label>
+      <button id="btnLogRefresh">&#8635; Refresh</button>
+    </div>
+    <div class="panel-body"><div id="logView">Select a log and press Refresh.</div></div>
+  </div>
+
+  <!-- CONFIG -->
+  <div class="panel">
+    <div class="panel-head"><h2>&#9881;&#65039; Effective Configuration <span class="muted">(secrets masked)</span></h2></div>
+    <div class="panel-body"><table class="kv" id="tblConfig"></table></div>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let statusData = null;
+let previewActive = false;
+let currentSlot = "topleft", currentMode = "DAY";
+let toastTimer = null;
+
+function toast(msg, isError) {
+  const el = $("toast");
+  el.textContent = msg;
+  el.style.borderColor = isError ? "var(--red)" : "var(--border)";
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 3500);
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* non-JSON */ }
+  if (!res.ok) throw new Error((data && (data.error || data.message)) || ("HTTP " + res.status));
+  return data;
+}
+
+function fmtUptime(s) {
+  if (!s) return "—";
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return (d ? d + "d " : "") + (h ? h + "h " : "") + m + "m";
+}
+function fmtBytes(b) {
+  if (b == null) return "—";
+  const u = ["B", "KB", "MB", "GB"]; let i = 0;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return b.toFixed(i ? 1 : 0) + " " + u[i];
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function kv(rows) {
+  return rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join("");
+}
+
+// ---------- status polling ----------
+async function refreshStatus() {
+  try {
+    const s = await api("/api/status");
+    statusData = s;
+    renderStatus(s);
+  } catch (e) {
+    $("pillStream").textContent = "API ERROR";
+    $("pillStream").className = "pill err";
+  }
+}
+
+function renderStatus(s) {
+  const st = s.stream, cam = s.camera, aud = s.audio, wd = s.watchdog, sys = s.system, pv = s.preview;
+
+  // header pills
+  const pillStream = $("pillStream");
+  if (st.broadcasting) {
+    pillStream.textContent = st.youtube_configured ? "BROADCASTING" : "ENCODING";
+    pillStream.className = "pill live";
+  } else {
+    pillStream.textContent = "NOT RUNNING";
+    pillStream.className = "pill err";
+  }
+  const pillMode = $("pillMode");
+  pillMode.textContent = st.mode === "fallback" ? "BRB SCREEN" : st.mode.toUpperCase();
+  pillMode.className = "pill " + (st.mode === "fallback" ? "warn" : "");
+  const pillCam = $("pillCamera");
+  pillCam.textContent = "CAMERA " + (cam.rtsp_status === "reachable" ? "OK" :
+                        cam.rtsp_status === "unreachable" ? "DOWN" : "?");
+  pillCam.className = "pill " + (cam.rtsp_status === "reachable" ? "live" :
+                      cam.rtsp_status === "unreachable" ? "err" : "");
+  const pillAudio = $("pillAudio");
+  pillAudio.textContent = "AUDIO: " + aud.mode.toUpperCase();
+  pillAudio.className = "pill";
+
+  const p = st.progress || {};
+  $("tblStream").innerHTML = kv([
+    ["Pipeline", st.direct_youtube_mode ? "Direct-to-YouTube" : (st.local_stream_enabled ? "MediaMTX (local RTSP)" : "Local only")],
+    ["FFmpeg", st.broadcasting ? `<span class="ok">running</span> (pid ${st.pid})` : '<span class="bad">stopped</span>'],
+    ["Uptime", fmtUptime(st.uptime_seconds)],
+    ["Encoder", esc(st.encoder) + " @ " + esc(st.resolution)],
+    ["Frame / FPS", (p.frame || "—") + " / " + (p.fps || "—")],
+    ["Bitrate", p.bitrate || "—"],
+    ["Speed", p.speed ? (parseFloat(p.speed) >= 0.98 ? `<span class="ok">${esc(p.speed)}</span>` : `<span class="mid">${esc(p.speed)}</span>`) : "—"],
+    ["Encoder CPU", st.cpu_percent != null ? st.cpu_percent + "%" : "—"],
+  ]);
+
+  $("tblCamera").innerHTML = kv([
+    ["RTSP source", cam.rtsp_configured ? "configured" : '<span class="bad">not set</span>'],
+    ["Reachability", cam.rtsp_status === "reachable" ? '<span class="ok">reachable</span>' :
+                     cam.rtsp_status === "unreachable" ? '<span class="bad">unreachable</span>' : "unknown"],
+    ["Stream mode", st.mode === "fallback" ? '<span class="mid">BRB fallback</span>' : esc(st.mode)],
+    ["Fallback screen", st.fallback_enabled ? "enabled" : "disabled"],
+  ]);
+
+  $("tblAudio").innerHTML = kv([
+    ["Mode", "<b>" + esc(aud.mode) + "</b>"],
+    ["Music files", aud.music_files + " MP3" + (aud.music_files === 1 ? "" : "s")],
+  ]);
+  document.querySelectorAll("[data-audio]").forEach(b => {
+    b.classList.toggle("active", b.dataset.audio === aud.mode);
+  });
+
+  const ws = wd.state || {};
+  $("tblWatchdog").innerHTML = kv([
+    ["Watchdog", wd.enabled ? '<span class="ok">enabled</span>' : "disabled"],
+    ["Total restarts", ws.total_restarts != null ? ws.total_restarts : "—"],
+    ["Backoff attempt", ws.attempt != null ? ws.attempt : "—"],
+    ["Last healthy", ws.last_healthy ? esc(String(ws.last_healthy).replace("T", " ").slice(0, 19)) : "—"],
+    ["Last restart", ws.last_restart ? esc(String(ws.last_restart).replace("T", " ").slice(0, 19)) : "—"],
+  ]);
+
+  const memUsed = (sys.mem_total_bytes && sys.mem_available_bytes != null)
+    ? sys.mem_total_bytes - sys.mem_available_bytes : null;
+  $("tblSystem").innerHTML = kv([
+    ["CPU", sys.cpu_percent != null ? sys.cpu_percent + "% of " + sys.cpu_count + " cores" : "—"],
+    ["Load avg", sys.load ? sys.load.join(" / ") : "—"],
+    ["Memory", memUsed != null ? fmtBytes(memUsed) + " / " + fmtBytes(sys.mem_total_bytes) : "—"],
+    ["Preview pipeline", pv.running ? '<span class="mid">running (' + (pv.cpu_percent != null ? pv.cpu_percent + "% CPU" : "…") + ")</span>" : '<span class="ok">off — 0% CPU</span>'],
+  ]);
+
+  // preview panel
+  $("idleTimeoutLabel").textContent = pv.idle_timeout_seconds;
+  renderPreview(pv);
+}
+
+function renderPreview(pv) {
+  const img = $("previewImg"), off = $("previewOffMsg");
+  $("btnPreviewStart").disabled = pv.running;
+  $("btnPreviewStop").disabled = !pv.running;
+
+  if (pv.running && !previewActive && pv.has_frame) {
+    previewActive = true;
+    img.src = "/api/preview/stream?t=" + Date.now();
+    img.style.display = "block";
+    off.style.display = "none";
+  } else if (!pv.running && previewActive) {
+    previewActive = false;
+    img.src = "";
+    img.style.display = "none";
+    off.style.display = "block";
+  }
+
+  const stats = [];
+  if (pv.running) {
+    stats.push(`source: <b>${esc(pv.source || "—")}</b>`);
+    stats.push(`fps: <b>${pv.fps}</b>`);
+    stats.push(`width: <b>${pv.width}px</b>`);
+    stats.push(`uptime: <b>${fmtUptime(pv.uptime_seconds)}</b>`);
+    if (pv.cpu_percent != null) stats.push(`cpu: <b>${pv.cpu_percent}%</b>`);
+    stats.push(`viewers: <b>${pv.viewers}</b>`);
+    if (pv.low_cpu_mode) stats.push(`<span class="mid">low-CPU mode (keyframes only)</span>`);
+    if (!pv.has_frame) stats.push(`<span class="mid">waiting for first frame…</span>`);
+  } else if (pv.last_error) {
+    stats.push(`<span class="bad">last error: ${esc(pv.last_error)}</span>`);
+  }
+  $("previewStats").innerHTML = stats.join(" &middot; ");
+}
+
+$("previewImg").addEventListener("error", () => {
+  // stream dropped; the next status poll will restart it if still running
+  previewActive = false;
+  $("previewImg").style.display = "none";
+  $("previewOffMsg").style.display = "block";
+});
+
+$("btnPreviewStart").addEventListener("click", async () => {
+  const source = $("previewSource").value;
+  $("btnPreviewStart").disabled = true;
+  try {
+    const r = await api("/api/preview/start?source=" + encodeURIComponent(source), { method: "POST" });
+    toast(r.message);
+  } catch (e) { toast("Preview failed: " + e.message, true); }
+  refreshStatus();
+});
+
+$("btnPreviewStop").addEventListener("click", async () => {
+  try {
+    await api("/api/preview/stop", { method: "POST" });
+    toast("Preview stopped — CPU released");
+  } catch (e) { toast(e.message, true); }
+  refreshStatus();
+});
+
+// ---------- controls ----------
+document.querySelectorAll("[data-audio]").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    try {
+      const r = await api("/api/audio/" + btn.dataset.audio, { method: "POST" });
+      toast("Audio: " + r.audio + " — " + r.message);
+    } catch (e) { toast(e.message, true); }
+    setTimeout(refreshStatus, 500);
+  });
+});
+
+$("btnRestart").addEventListener("click", async () => {
+  if (!confirm("Restart the broadcast FFmpeg?\nThe supervisor loop restarts it within a few seconds; YouTube viewers may see a brief hiccup.")) return;
+  try {
+    const r = await api("/api/stream/restart", { method: "POST" });
+    toast(r.message);
+  } catch (e) { toast(e.message, true); }
+});
+
+$("btnWeatherRefresh").addEventListener("click", async () => {
+  $("btnWeatherRefresh").disabled = true;
+  toast("Refreshing weather overlay…");
+  try {
+    const r = await api("/api/weather/refresh", { method: "POST" });
+    toast(r.message);
+    loadOverlays();
+  } catch (e) { toast(e.message, true); }
+  $("btnWeatherRefresh").disabled = false;
+});
+
+// ---------- overlays ----------
+const OVERLAYS = [
+  ["weather", "Weather + Alerts (bottom-right)"],
+  ["tl", "Sponsor — Top-Left"],
+  ["tr", "Sponsor — Top-Right"],
+  ["fallback", "BRB Fallback Screen"],
+];
+function loadOverlays() {
+  $("overlayGrid").innerHTML = OVERLAYS.map(([key, label]) =>
+    `<div class="overlay-item">
+       <img src="/api/overlay/${key}?t=${Date.now()}" onerror="this.parentElement.style.display='none'">
+       <div class="cap">${esc(label)}</div>
+     </div>`).join("");
+}
+$("btnOverlayReload").addEventListener("click", loadOverlays);
+
+// ---------- ads ----------
+async function loadAds() {
+  try {
+    const r = await api("/api/ads");
+    renderAds(r.ads);
+  } catch (e) { toast("Failed to load ads: " + e.message, true); }
+}
+function renderAds(ads) {
+  const files = ((ads[currentSlot] || {})[currentMode]) || [];
+  $("uploadTargetLabel").textContent =
+    (currentSlot === "topleft" ? "TL" : "TR") + " · " + (currentMode === "DAY" ? "Day" : "Night");
+  if (!files.length) {
+    $("adGrid").innerHTML = '<div class="muted">No logos in this slot yet — a transparent placeholder is shown on stream.</div>';
+    return;
+  }
+  $("adGrid").innerHTML = files.map(f =>
+    `<div class="ad-item">
+       <img src="/api/ads/image?slot=${currentSlot}&mode=${currentMode}&name=${encodeURIComponent(f.name)}">
+       <div class="name">${esc(f.name)}<br>${fmtBytes(f.bytes)}</div>
+       <button class="danger" data-del="${esc(f.name)}">Delete</button>
+     </div>`).join("");
+  document.querySelectorAll("[data-del]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Delete " + btn.dataset.del + "?")) return;
+      try {
+        const r = await api("/api/ads/delete", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slot: currentSlot, mode: currentMode, name: btn.dataset.del }),
+        });
+        toast(r.message); renderAds(r.ads);
+      } catch (e) { toast(e.message, true); }
+    });
+  });
+}
+document.querySelectorAll(".ad-tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".ad-tab").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    currentSlot = tab.dataset.slot; currentMode = tab.dataset.mode;
+    loadAds();
+  });
+});
+$("btnAdUpload").addEventListener("click", async () => {
+  const input = $("adFile");
+  if (!input.files.length) { toast("Choose a file first", true); return; }
+  const fd = new FormData();
+  fd.append("slot", currentSlot);
+  fd.append("mode", currentMode);
+  fd.append("file", input.files[0]);
+  $("btnAdUpload").disabled = true;
+  try {
+    const r = await api("/api/ads/upload", { method: "POST", body: fd });
+    toast(r.message); renderAds(r.ads); input.value = "";
+  } catch (e) { toast("Upload failed: " + e.message, true); }
+  $("btnAdUpload").disabled = false;
+});
+
+// ---------- logs ----------
+async function loadLog() {
+  try {
+    const r = await api("/api/logs?name=" + $("logName").value + "&lines=300");
+    const view = $("logView");
+    view.textContent = r.lines.length ? r.lines.join("\n") : (r.note || "(empty)");
+    view.scrollTop = view.scrollHeight;
+  } catch (e) { $("logView").textContent = "Error: " + e.message; }
+}
+$("btnLogRefresh").addEventListener("click", loadLog);
+$("logName").addEventListener("change", loadLog);
+setInterval(() => { if ($("logAuto").checked) loadLog(); }, 5000);
+
+// ---------- config ----------
+async function loadConfig() {
+  try {
+    const c = await api("/api/config");
+    const rows = [];
+    const flat = (obj, prefix) => {
+      for (const [k, v] of Object.entries(obj)) {
+        if (v && typeof v === "object") flat(v, k + ".");
+        else rows.push([(prefix || "") + k, esc(String(v))]);
+      }
+    };
+    flat(c, "");
+    $("tblConfig").innerHTML = kv(rows);
+  } catch (e) { /* ignore */ }
+}
+
+// ---------- boot ----------
+refreshStatus();
+loadOverlays();
+loadAds();
+loadConfig();
+setInterval(refreshStatus, 3000);
+setInterval(loadOverlays, 60000);
+</script>
+</body>
+</html>

@@ -25,11 +25,25 @@ WORKDIR="/config"
 ADMIN_USER="${ADMIN_USER:-cam_admin}"
 ADMIN_PASS="${ADMIN_PASS:-your_secure_password}"
 
-if [[ "$RTSP_SOURCE" =~ rtsp://([^:]+):([^@]+)@([^:/]+):([0-9]+)(.*) ]]; then RTSP_HOST="${BASH_REMATCH[3]}"; RTSP_PORT="${BASH_REMATCH[4]}";
-elif [[ "$RTSP_SOURCE" =~ rtsp://([^:]+):([^@]+)@([^/]+)(.*) ]]; then RTSP_HOST="${BASH_REMATCH[3]}"; RTSP_PORT="554";
-elif [[ "$RTSP_SOURCE" =~ rtsp://([^:/]+):([0-9]+)(.*) ]]; then RTSP_HOST="${BASH_REMATCH[1]}"; RTSP_PORT="${BASH_REMATCH[2]}";
-elif [[ "$RTSP_SOURCE" =~ rtsp://([^/]+)(.*) ]]; then RTSP_HOST="${BASH_REMATCH[1]}"; RTSP_PORT="554";
-else RTSP_HOST="localhost"; RTSP_PORT="554"; fi
+# Parse host/port for TCP health checks. Splitting on the LAST '@' keeps
+# passwords containing '@' or ':' from shifting the host (the old regexes did).
+_rtsp_hostport="${RTSP_SOURCE#*://}"
+_rtsp_hostport="${_rtsp_hostport##*@}"
+_rtsp_hostport="${_rtsp_hostport%%/*}"
+if [[ "$_rtsp_hostport" == \[*\]* ]]; then
+    RTSP_HOST="${_rtsp_hostport%%]*}"; RTSP_HOST="${RTSP_HOST#[}"
+    _rtsp_after="${_rtsp_hostport##*]}"
+    if [[ "$_rtsp_after" == :* ]]; then RTSP_PORT="${_rtsp_after#:}"; else RTSP_PORT="554"; fi
+elif [[ "$_rtsp_hostport" == *:* ]]; then
+    RTSP_HOST="${_rtsp_hostport%%:*}"; RTSP_PORT="${_rtsp_hostport##*:}"
+else
+    RTSP_HOST="$_rtsp_hostport"; RTSP_PORT="554"
+fi
+case "$RTSP_PORT" in (*[!0-9]*|"") RTSP_PORT="554";; esac
+[ -n "$RTSP_HOST" ] || RTSP_HOST="localhost"
+if [[ "$RTSP_SOURCE" == *[[:space:]]* ]]; then
+    echo "[init] WARNING: RTSP_SOURCE contains whitespace - FFmpeg will misparse it. Percent-encode special characters."
+fi
 
 HARDWARE_ACCEL="${HARDWARE_ACCEL:-true}"
 VAAPI_DEVICE="${VAAPI_DEVICE:-/dev/dri/renderD128}"
@@ -84,6 +98,35 @@ FFMPEG_PROGRESS_ARG="-progress $FFMPEG_PROGRESS_FILE"
 rm -f "$FFMPEG_PROGRESS_FILE"
 touch "$FFMPEG_PROGRESS_FILE"
 
+# --- FFMPEG STDERR LOG (viewable in the Admin WebUI) ---
+FFMPEG_LOG="$WORKDIR/ffmpeg.log"
+# Keep the log bounded: truncate when it grows past ~5MB
+trim_ffmpeg_log() {
+    if [ -f "$FFMPEG_LOG" ] && [ "$(wc -c < "$FFMPEG_LOG" 2>/dev/null || echo 0)" -gt 5242880 ]; then
+        tail -c 1048576 "$FFMPEG_LOG" > "$FFMPEG_LOG.tmp" 2>/dev/null && mv -f "$FFMPEG_LOG.tmp" "$FFMPEG_LOG"
+    fi
+}
+
+# --- WATCHDOG RESTART HOLD ---
+# watchdog.py writes an epoch timestamp here before killing FFmpeg; we honor it
+# so its exponential backoff actually delays the respawn (previously the loop
+# restarted FFmpeg instantly, making the backoff a no-op).
+RESTART_HOLD_FILE="$WORKDIR/restart_hold"
+honor_restart_hold() {
+    local hold_until now
+    hold_until=$(cat "$RESTART_HOLD_FILE" 2>/dev/null || echo 0)
+    case "$hold_until" in (*[!0-9]*|"") hold_until=0;; esac
+    now=$(date +%s)
+    if [ "$hold_until" -gt "$now" ]; then
+        local wait_s=$((hold_until - now))
+        if [ "$wait_s" -gt 900 ]; then wait_s=900; fi
+        log "[Watchdog] Honoring restart hold: waiting ${wait_s}s before respawning FFmpeg..."
+        sleep "$wait_s"
+    fi
+    rm -f "$RESTART_HOLD_FILE"
+}
+rm -f "$RESTART_HOLD_FILE"
+
 # ==============================================================================
 #  HEALTH CHECK FUNCTIONS
 # ==============================================================================
@@ -110,6 +153,11 @@ check_vaapi() {
         fi
         log "VAAPI hardware acceleration enabled on $VAAPI_DEVICE"; return 0;
     else log "Software encoding mode"; return 1; fi
+}
+
+# Record the encoder actually in use (after VAAPI auto-fallback) for the WebUI
+record_encoder_mode() {
+    if [ "$HARDWARE_ACCEL" = "true" ]; then echo "vaapi" > "$WORKDIR/encoder_mode"; else echo "software" > "$WORKDIR/encoder_mode"; fi
 }
 
 update_weather_playlist() {
@@ -173,8 +221,11 @@ generate_music_playlist() {
 
     log "[Music] Found ${#music_files[@]} unique MP3 file(s) in playlist"
     > "$MUSIC_PLAYLIST"
+    local esc
     for f in "${music_files[@]}"; do
-        echo "file '$f'" >> "$MUSIC_PLAYLIST"
+        # Escape single quotes for the concat demuxer ("Don't Stop.mp3" etc.)
+        esc=$(printf '%s' "$f" | sed "s/'/'\\\\''/g")
+        echo "file '$esc'" >> "$MUSIC_PLAYLIST"
     done
     
     # Validate playlist has at least one entry
@@ -191,6 +242,7 @@ generate_music_playlist() {
 # ==============================================================================
 log "--- 1. Checking Hardware Acceleration ---"
 check_vaapi
+record_encoder_mode
 
 log "--- 2. Checking Weather Icons ---"
 cat <<'EOF' > /tmp/download_icons.py
@@ -217,28 +269,44 @@ mkdir -p "$ADS_BASE/topleft/DAY" "$ADS_BASE/topleft/NIGHT" "$ADS_BASE/topright/D
 log "--- Configuring Stream Output ---"
 if [ "$DIRECT_YOUTUBE_MODE" = "false" ]; then
     log "MediaMTX mode enabled"
+    if [ "$ENABLE_LOCAL_STREAM" = "true" ] && { [ "$ADMIN_PASS" = "your_secure_password" ] || [ "$ADMIN_PASS" = "change_me_please" ]; }; then
+        log "WARNING: ADMIN_PASS is a shipped default - the exposed RTSP output is protected by well-known credentials. Change it!"
+    fi
     if [ "$ENABLE_LOCAL_STREAM" = "true" ]; then RTSP_ADDRESS=":8554"; else RTSP_ADDRESS="127.0.0.1:8554"; fi
-    cat <<EOF > /usr/local/bin/mediamtx.yml
+    # Write the config to /tmp (NOT /usr/local/bin): when PUID is set the script
+    # re-execs as a non-root user that cannot write to /usr/local/bin.
+    MEDIAMTX_CONF="/tmp/mediamtx.yml"
+    # NOTE: uses MediaMTX v1.x keys (rtmp/hls/webrtc/srt) - the pre-1.0
+    # *Disable keys make v1.15 exit with "non-existent parameter".
+    cat <<EOF > "$MEDIAMTX_CONF"
 rtspAddress: $RTSP_ADDRESS
 readTimeout: 60s
 writeTimeout: 60s
-rtmpDisable: yes
-hlsDisable: yes
-webrtcDisable: yes
-srtDisable: yes
+rtmp: no
+hls: no
+webrtc: no
+srt: no
 api: yes
 apiAddress: 127.0.0.1:9997
 authMethod: internal
 authInternalUsers: [{ user: $ADMIN_USER, pass: $ADMIN_PASS, permissions: [{ action: api }, { action: publish }, { action: read }] }]
-paths: { all: }
+paths: { all_others: }
 EOF
-    /usr/local/bin/mediamtx /usr/local/bin/mediamtx.yml &
+    chmod 600 "$MEDIAMTX_CONF" 2>/dev/null
+    /usr/local/bin/mediamtx "$MEDIAMTX_CONF" &
     sleep 2
 else
     log "Direct-to-YouTube mode enabled"
 fi
 
-if [ -n "$YOUTUBE_KEY" ]; then python3 /audio_api.py & sleep 1; fi
+# Audio API always runs (the Docker healthcheck depends on its /health endpoint)
+python3 /audio_api.py & sleep 1
+
+# Admin WebUI (dashboard + on-demand stream preview) - see README
+if [ "${ADMIN_WEBUI_ENABLED:-true}" = "true" ]; then
+    log "--- Starting Admin WebUI on port ${ADMIN_PORT:-9999} ---"
+    python3 /admin_api.py &
+fi
 
 if [ ! -f "$WEATHER_COMBINED" ]; then python3 /weather.py blank "$WEATHER_COMBINED" "900" "500"; fi
 update_weather_playlist "0"
@@ -250,8 +318,10 @@ echo -e "file '$AD_FINAL_TR'\nduration 10\nfile '$AD_FINAL_TR'" > "$AD_PLAYLIST_
 if [ "$FALLBACK_ENABLED" = "true" ]; then
     log "--- Generating Fallback Screen ---"
     python3 /weather.py fallback "$FALLBACK_IMAGE" "$YOUTUBE_WIDTH" "$YOUTUBE_HEIGHT" "We'll Be Right Back"
-    echo "normal" > "$STREAM_MODE_FILE"
 fi
+# Always reset the mode at boot - a stale "fallback" left from a previous run
+# would make the watchdog skip every recovery (it defers while in fallback).
+echo "normal" > "$STREAM_MODE_FILE"
 
 # ==============================================================================
 #  BACKGROUND MANAGERS
@@ -263,8 +333,11 @@ get_mode() { local hr=$(date +%-H); if [ "$hr" -ge "$DAY_START_HOUR" ] && [ "$hr
     shopt -s nocaseglob nullglob
     while true; do
         MODE=$(get_mode); TARGET_DIR="$ADS_BASE/topleft/$MODE"
-        FILES=("$TARGET_DIR"/*.png "$TARGET_DIR"/*.jpg "$TARGET_DIR"/*.jpeg)
-        if [ ${#FILES[@]} -eq 0 ]; then python3 /weather.py blank "$AD_FINAL_TL" "$SCALE_ADS_TL" "$SCALE_ADS_TL"; sleep 60; else
+        FILES=("$TARGET_DIR"/*.png "$TARGET_DIR"/*.jpg "$TARGET_DIR"/*.jpeg "$TARGET_DIR"/*.webp)
+        if [ ${#FILES[@]} -eq 0 ]; then
+            # Atomic swap: never rewrite the live overlay in place while ffmpeg reads it
+            if python3 /weather.py blank "$AD_TEMP_TL" "$SCALE_ADS_TL" "$SCALE_ADS_TL"; then mv -f "$AD_TEMP_TL" "$AD_FINAL_TL"; fi
+            LAST_AD_HASH_TL=""; sleep 60; else
             for f in "${FILES[@]}"; do
                 if [ "$(get_mode)" != "$MODE" ]; then break; fi
                 CURRENT_HASH=$(md5sum "$f" 2>/dev/null | cut -d' ' -f1)
@@ -282,8 +355,10 @@ get_mode() { local hr=$(date +%-H); if [ "$hr" -ge "$DAY_START_HOUR" ] && [ "$hr
     shopt -s nocaseglob nullglob; TR_INDEX=0
     while true; do
         MODE=$(get_mode); TARGET_DIR="$ADS_BASE/topright/$MODE"
-        FILES=("$TARGET_DIR"/*.png "$TARGET_DIR"/*.jpg "$TARGET_DIR"/*.jpeg)
-        if [ ${#FILES[@]} -eq 0 ]; then python3 /weather.py blank "$AD_FINAL_TR" "$SCALE_ADS_TR" "$SCALE_ADS_TR"; sleep 60; else
+        FILES=("$TARGET_DIR"/*.png "$TARGET_DIR"/*.jpg "$TARGET_DIR"/*.jpeg "$TARGET_DIR"/*.webp)
+        if [ ${#FILES[@]} -eq 0 ]; then
+            if python3 /weather.py blank "$AD_TEMP_TR" "$SCALE_ADS_TR" "$SCALE_ADS_TR"; then mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"; fi
+            LAST_AD_HASH_TR=""; sleep 60; else
             if [ $TR_INDEX -ge ${#FILES[@]} ]; then TR_INDEX=0; fi
             CURRENT_HASH=$(md5sum "${FILES[$TR_INDEX]}" 2>/dev/null | cut -d' ' -f1)
             if [ "$CURRENT_HASH" != "$LAST_AD_HASH_TR" ] || [ ! -f "$AD_FINAL_TR" ]; then
@@ -304,7 +379,14 @@ if [ "$WEATHER_ENABLED" = "true" ]; then
             if [ -f "$WEATHER_TEMP" ]; then
                 mv -f "$WEATHER_TEMP" "$WEATHER_COMBINED"
                 FLASH_TEMP="${WEATHER_TEMP%.png}_flash.png"
-                if [ -f "$FLASH_TEMP" ]; then mv -f "$FLASH_TEMP" "$WEATHER_COMBINED_FLASH"; else rm -f "$WEATHER_COMBINED_FLASH"; fi
+                if [ -f "$FLASH_TEMP" ]; then
+                    mv -f "$FLASH_TEMP" "$WEATHER_COMBINED_FLASH"
+                elif [ -f "$WEATHER_COMBINED_FLASH" ]; then
+                    # Never delete the flash frame while a running encoder's
+                    # playlist may still reference it (a missing concat entry
+                    # kills ffmpeg). Overwrite it with the normal frame instead.
+                    cp -f "$WEATHER_COMBINED" "${WEATHER_COMBINED_FLASH}.tmp" && mv -f "${WEATHER_COMBINED_FLASH}.tmp" "$WEATHER_COMBINED_FLASH"
+                fi
                 META_TEMP="${WEATHER_TEMP%.png}_meta.txt"
                 if [ -f "$META_TEMP" ]; then update_weather_playlist "$(grep "needs_flash=" "$META_TEMP" | cut -d'=' -f2)"; mv -f "$META_TEMP" "$WEATHER_META"; fi
             fi
@@ -313,7 +395,9 @@ if [ "$WEATHER_ENABLED" = "true" ]; then
     ) &
 fi
 
-if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then echo "muted" > "/config/audio_mode"; fi
+# Initialize audio mode only if missing - the user's persisted choice
+# (e.g. music) survives container restarts.
+if [ ! -f "/config/audio_mode" ]; then echo "muted" > "/config/audio_mode"; fi
 if [ "$WATCHDOG_ENABLED" = "true" ] && [ -n "$YOUTUBE_KEY" ]; then log "--- Starting Self-Healing Watchdog ---"; python3 /watchdog.py & fi
 
 # ==============================================================================
@@ -379,19 +463,25 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         fi
 
         # Combine RTSP Input + Overlay Inputs
+        # NOTE: stdout stays redirected to stderr so $(...) PID capture stays clean;
+        # stderr is tee'd into $FFMPEG_LOG for the Admin WebUI log viewer.
         if [ "$audio_mode" = "unmuted" ]; then
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(tee -a "$FFMPEG_LOG" >&2) &
         elif [ "$audio_mode" = "music" ]; then
             # Music mode: stream from playlist, loop infinitely with -stream_loop -1
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(tee -a "$FFMPEG_LOG" >&2) &
         else
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(tee -a "$FFMPEG_LOG" >&2) &
         fi
         echo $!
     }
 
     run_fallback_ffmpeg() {
         log "[Fallback] Starting 'We'll Be Right Back' stream (With Overlays)..." >&2
+
+        # Fresh progress file so the Docker healthcheck stays green during
+        # camera outages (the BRB encoder keeps it advancing)
+        rm -f "$FFMPEG_PROGRESS_FILE"; touch "$FFMPEG_PROGRESS_FILE"
 
         # BRB Input acts as Input 0
         local BRB_INPUT_OPTS="-loop 1 -re -i $FALLBACK_IMAGE"
@@ -413,18 +503,23 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             -filter_complex "$final_filters" \
             -map "[vfinal]" -map $((INPUT_COUNT)):a \
             $video_codec -c:a aac -b:a 128k \
-            -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 &
+            $FFMPEG_PROGRESS_ARG \
+            -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(tee -a "$FFMPEG_LOG" >&2) &
         echo $!
     }
 
     CURRENT_MODE="normal"
     FFMPEG_PID=""
-    LAST_SIZE=0
+    LAST_MTIME=""
     FROZEN_COUNT=0
+    LAST_FRAME=""
+    VIDEO_FROZEN_COUNT=0
 
     while true; do
         if [ -z "$FFMPEG_PID" ] || ! kill -0 $FFMPEG_PID 2>/dev/null; then
             if [ "$CURRENT_MODE" = "normal" ]; then
+                honor_restart_hold
+                trim_ffmpeg_log
                 RETRY_COUNT=0
                 while [ $RETRY_COUNT -lt 3 ]; do
                     AUDIO_MODE=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
@@ -435,7 +530,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                             AUDIO_MODE="muted"
                         fi
                     fi
-                    rm -f "$FFMPEG_PROGRESS_FILE"; touch "$FFMPEG_PROGRESS_FILE"; LAST_SIZE=0; FROZEN_COUNT=0
+                    rm -f "$FFMPEG_PROGRESS_FILE"; touch "$FFMPEG_PROGRESS_FILE"; LAST_MTIME=""; FROZEN_COUNT=0; LAST_FRAME=""; VIDEO_FROZEN_COUNT=0
                     FFMPEG_PID=$(run_camera_ffmpeg "$AUDIO_MODE")
                     FFMPEG_START_TIME=$(date +%s)
                     sleep 2
@@ -444,10 +539,18 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                     RETRY_COUNT=$((RETRY_COUNT+1))
                 done
                 if ! kill -0 $FFMPEG_PID 2>/dev/null; then
-                     log "Startup failed. Forcing Fallback..."
-                     CURRENT_MODE="fallback"
-                     FFMPEG_PID=$(run_fallback_ffmpeg)
-                     FFMPEG_START_TIME=$(date +%s)
+                    if [ "$FALLBACK_ENABLED" = "true" ]; then
+                        log "Startup failed. Forcing Fallback..."
+                        CURRENT_MODE="fallback"
+                        echo "fallback" > "$STREAM_MODE_FILE"
+                        FFMPEG_PID=$(run_fallback_ffmpeg)
+                        FFMPEG_START_TIME=$(date +%s)
+                    else
+                        log "Startup failed and fallback is disabled. Retrying in 10s..."
+                        FFMPEG_PID=""
+                        sleep 10
+                        continue
+                    fi
                 fi
                 echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
                 log "FFmpeg started (PID: $FFMPEG_PID)"
@@ -462,27 +565,53 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         while kill -0 $FFMPEG_PID 2>/dev/null; do
             LOOP_COUNT=$((LOOP_COUNT + 1))
 
-            # 1. ZOMBIE CHECK (Size-Based) - Only in Normal Mode
+            # 1. ZOMBIE CHECK (mtime-based) - Only in Normal Mode
+            # FFmpeg rewrites the -progress file every ~0.5s; if its mtime stops
+            # changing for 12 consecutive checks the encoder is frozen. (mtime is
+            # used instead of file size so the file can be safely truncated below
+            # without breaking detection.)
             # Skip frozen detection for first 5 seconds after startup (initialization time)
             if [ "$CURRENT_MODE" = "normal" ]; then
                 FFMPEG_UPTIME=$(( $(date +%s) - FFMPEG_START_TIME ))
                 if [ $FFMPEG_UPTIME -gt 5 ]; then
-                    CURRENT_SIZE=$(wc -c < "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)
-                    if [ "$CURRENT_SIZE" -le "$LAST_SIZE" ]; then
+                    CURRENT_MTIME=$(stat -c %Y "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)
+                    if [ "$CURRENT_MTIME" = "$LAST_MTIME" ]; then
                         FROZEN_COUNT=$((FROZEN_COUNT + 1))
                         if [ $FROZEN_COUNT -ge 12 ]; then
-                            log "[ERROR] FFmpeg FROZEN (Size static at $CURRENT_SIZE for 12s after ${FFMPEG_UPTIME}s uptime). Killing..."
+                            log "[ERROR] FFmpeg FROZEN (no progress writes for 12s after ${FFMPEG_UPTIME}s uptime). Killing..."
                             kill -9 $FFMPEG_PID 2>/dev/null
                             break
                         fi
                     else
                         FROZEN_COUNT=0
-                        LAST_SIZE=$CURRENT_SIZE
+                        LAST_MTIME="$CURRENT_MTIME"
+                    fi
+                    # VIDEO-FRAME CHECK: with silent/music audio the progress
+                    # file keeps updating even if the camera video stalls, so
+                    # also require the video frame counter to advance.
+                    CURRENT_FRAME=$(tail -c 4096 "$FFMPEG_PROGRESS_FILE" 2>/dev/null | grep '^frame=' | tail -1 | cut -d= -f2)
+                    if [ -n "$CURRENT_FRAME" ] && [ "$CURRENT_FRAME" = "$LAST_FRAME" ]; then
+                        VIDEO_FROZEN_COUNT=$((VIDEO_FROZEN_COUNT + 1))
+                        if [ $VIDEO_FROZEN_COUNT -ge 30 ]; then
+                            log "[ERROR] Video FROZEN at frame $CURRENT_FRAME for 30s (audio still flowing). Killing..."
+                            kill -9 $FFMPEG_PID 2>/dev/null
+                            break
+                        fi
+                    else
+                        VIDEO_FROZEN_COUNT=0
+                        LAST_FRAME="$CURRENT_FRAME"
+                    fi
+                    # Cap progress file growth on long runs (~10MB/day previously
+                    # grew unbounded in /config)
+                    if [ $((LOOP_COUNT % 3600)) -eq 0 ] && [ "$(wc -c < "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)" -gt 10485760 ]; then
+                        : > "$FFMPEG_PROGRESS_FILE"
                     fi
                 else
-                    # Still initializing, reset frozen counter
+                    # Still initializing, reset frozen counters
                     FROZEN_COUNT=0
-                    LAST_SIZE=0
+                    LAST_MTIME=""
+                    VIDEO_FROZEN_COUNT=0
+                    LAST_FRAME=""
                 fi
             fi
 
@@ -512,7 +641,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 
             # Heartbeat Logging every 10s
             if [ $((LOOP_COUNT % 10)) -eq 0 ] && [ "$CURRENT_MODE" = "normal" ]; then
-                log "[Heartbeat] Monitoring Stream... PID:$FFMPEG_PID Size:$CURRENT_SIZE"
+                log "[Heartbeat] Monitoring Stream... PID:$FFMPEG_PID Uptime:${FFMPEG_UPTIME:-0}s"
             fi
 
             sleep 1
@@ -521,7 +650,15 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         # FFmpeg Died/Killed Logic
         if [ -n "$FFMPEG_PID" ] && ! kill -0 $FFMPEG_PID 2>/dev/null; then
             wait $FFMPEG_PID 2>/dev/null; EXIT_CODE=$?
-            if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
+            # ffmpeg is spawned inside a command substitution subshell, so it is
+            # not a job of this shell and wait reports 127 - don't log it as a
+            # meaningful exit code.
+            [ "$EXIT_CODE" = "127" ] && EXIT_CODE="n/a"
+            if [ "$CURRENT_MODE" = "normal" ] && [ -f "$RESTART_HOLD_FILE" ]; then
+                # Intentional restart (watchdog or WebUI/API) - skip the BRB
+                # detour and respawn in normal mode; honor_restart_hold paces it.
+                log "FFmpeg stopped for a managed restart (Code $EXIT_CODE). Respawning..."
+            elif [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
                 log "[Fallback] Stream died (Code $EXIT_CODE). Switching..."
                 CURRENT_MODE="fallback"
                 echo "fallback" > "$STREAM_MODE_FILE"
@@ -540,7 +677,6 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 #  MEDIAMTX MODE
 # ==============================================================================
 else
-    # (Note: Overlays + RTSP split logic could be applied here too if needed, but keeping it simple for now)
     if [ "$HARDWARE_ACCEL" = "true" ]; then
         FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=nv12[soft_final];[soft_final]hwupload[vfinal]"
         HW_INIT="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
@@ -550,9 +686,73 @@ else
         HW_INIT=""
         VIDEO_CODEC="-c:v libx264 -preset $SOFTWARE_PRESET -crf $SOFTWARE_CRF -b:v $VIDEO_BITRATE -maxrate $VIDEO_BITRATE -bufsize 28M -r $VIDEO_FPS -g $(($VIDEO_FPS * 2))"
     fi
+
+    # --- YouTube Restreamer (MediaMTX -> YouTube) ---
+    # Restored: this second FFmpeg leg (documented in the README since v2.7)
+    # was lost in the v2.8.3 refactor, so MediaMTX mode never actually pushed
+    # to YouTube. It reads the composed local stream and re-encodes for YouTube,
+    # with the same audio-mode support (muted / unmuted / music) as direct mode.
+    if [ -n "$YOUTUBE_KEY" ]; then
+        if [ ! -f "/config/audio_mode" ]; then echo "muted" > "/config/audio_mode"; fi
+        (
+            sleep 10
+            if [ "$HARDWARE_ACCEL" = "true" ]; then
+                YT_FILTERS="scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=nv12,hwupload"
+                YT_HW_INIT="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
+                YT_CODEC="-c:v h264_vaapi -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60"
+            else
+                YT_FILTERS="scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT}"
+                YT_HW_INIT=""
+                YT_CODEC="-c:v libx264 -preset $SOFTWARE_PRESET -b:v $YOUTUBE_BITRATE -maxrate $YOUTUBE_BITRATE -bufsize 9000k -g 60"
+            fi
+            LOCAL_URL="rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live"
+            while true; do
+                honor_restart_hold
+                trim_ffmpeg_log
+                AUDIO_MODE=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
+                if [ "$AUDIO_MODE" = "music" ] && ! generate_music_playlist; then
+                    log "[Restreamer] No music files available, falling back to muted"
+                    AUDIO_MODE="muted"
+                fi
+                rm -f "$FFMPEG_PROGRESS_FILE"; touch "$FFMPEG_PROGRESS_FILE"
+                if [ "$AUDIO_MODE" = "unmuted" ]; then
+                    ffmpeg -hide_banner -loglevel warning $YT_HW_INIT -rtsp_transport tcp -i "$LOCAL_URL" \
+                        -vf "$YT_FILTERS" -map 0:v:0 -map 0:a:0? $YT_CODEC -c:a aac -b:a 128k -ac 2 \
+                        $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2> >(tee -a "$FFMPEG_LOG" >&2) &
+                elif [ "$AUDIO_MODE" = "music" ]; then
+                    ffmpeg -hide_banner -loglevel warning $YT_HW_INIT -rtsp_transport tcp -i "$LOCAL_URL" \
+                        -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" \
+                        -vf "$YT_FILTERS" -map 0:v:0 -map 1:a $YT_CODEC -c:a aac -b:a 128k -ac 2 \
+                        $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2> >(tee -a "$FFMPEG_LOG" >&2) &
+                else
+                    ffmpeg -hide_banner -loglevel warning $YT_HW_INIT -rtsp_transport tcp -i "$LOCAL_URL" \
+                        -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
+                        -vf "$YT_FILTERS" -map 0:v:0 -map 1:a:0 $YT_CODEC -c:a aac -b:a 128k \
+                        $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2> >(tee -a "$FFMPEG_LOG" >&2) &
+                fi
+                YT_PID=$!
+                echo $YT_PID > "/config/youtube_restreamer.pid"
+                log "[Restreamer] YouTube leg started (PID: $YT_PID, audio: $AUDIO_MODE)"
+                while kill -0 $YT_PID 2>/dev/null; do
+                    NEW_AUDIO=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
+                    if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then
+                        log "[Restreamer] Audio change ($AUDIO_MODE -> $NEW_AUDIO). Restarting YouTube leg..."
+                        kill $YT_PID 2>/dev/null
+                        break
+                    fi
+                    sleep 2
+                done
+                wait $YT_PID 2>/dev/null
+                sleep 3
+            done
+        ) &
+    fi
+
     while true; do
-        # Combine RTSP + Overlays
-        ffmpeg -hide_banner -loglevel warning $HW_INIT $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$FINAL_FILTERS" -map "[vfinal]" -map 0:a? $VIDEO_CODEC -c:a copy $FFMPEG_PROGRESS_ARG -f rtsp -rtsp_transport tcp "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live"
+        # Local encoder: camera + overlays -> MediaMTX. The -progress file is
+        # owned by the YouTube restreamer leg above (that's the stream the
+        # watchdog cares about), so it is not written here.
+        ffmpeg -hide_banner -loglevel warning $HW_INIT $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$FINAL_FILTERS" -map "[vfinal]" -map 0:a? $VIDEO_CODEC -c:a copy -f rtsp -rtsp_transport tcp "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live"
         log "FFmpeg exited, restarting in 5 seconds..."
         sleep 5
     done
