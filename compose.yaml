@@ -60,7 +60,6 @@ services:
 
       # --- DEBUGGING ---
       # - WEATHER_DEBUG=true
-      # - FFMPEG_PROGRESS_LOG=true  # Enable frame logging (WARNING: ~10MB/day)
       
       # --- FALLBACK MODE ---
       - FALLBACK_ENABLED=true  # Show "We'll Be Right Back" when camera is unreachable

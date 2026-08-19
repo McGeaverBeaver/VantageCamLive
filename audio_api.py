@@ -35,6 +35,16 @@ def set_audio_mode(mode):
     with open(CONTROL_FILE, 'w') as f:
         f.write(mode)
 
+    # During a camera outage the PID belongs to the BRB keep-alive stream;
+    # audio modes don't apply to it, so killing it would only interrupt the
+    # broadcast. The saved mode is picked up when the camera stream returns.
+    try:
+        with open("/config/stream_mode", 'r') as f:
+            if f.read().strip() == "fallback":
+                return False
+    except OSError:
+        pass
+
     # Signal the restreamer to restart
     try:
         with open(RESTREAMER_PID_FILE, 'r') as f:

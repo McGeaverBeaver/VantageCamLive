@@ -72,7 +72,9 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push Docker image (arm64, no Intel)
-        if: github.event_name != 'pull_request'
+        # Only the default branch may move the public :latest-arm64 tag -
+        # previously any claude/** branch push silently overwrote it.
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/'))
         uses: docker/build-push-action@v5
         with:
           context: .

@@ -92,7 +92,9 @@ MUSIC_DIR="$WORKDIR/music"
 MUSIC_PLAYLIST="$WORKDIR/music_playlist.txt"
 
 # --- HEARTBEAT MONITOR CONFIG ---
-FFMPEG_PROGRESS_LOG="true"
+# The -progress file drives frozen-stream detection, the Docker healthcheck and
+# the Admin WebUI stats; it is always on and its growth is capped by periodic
+# truncation in the monitor loops.
 FFMPEG_PROGRESS_FILE="$WORKDIR/ffmpeg_progress.txt"
 FFMPEG_PROGRESS_ARG="-progress $FFMPEG_PROGRESS_FILE"
 rm -f "$FFMPEG_PROGRESS_FILE"
@@ -126,6 +128,9 @@ honor_restart_hold() {
     rm -f "$RESTART_HOLD_FILE"
 }
 rm -f "$RESTART_HOLD_FILE"
+# Clear a stale PID file from a previous run: after a reboot the recorded PID
+# may belong to an unrelated process that the audio API/watchdog would signal.
+rm -f "$WORKDIR/youtube_restreamer.pid"
 
 # ==============================================================================
 #  HEALTH CHECK FUNCTIONS
@@ -142,6 +147,9 @@ check_rtsp_robust() {
 #  HELPER FUNCTIONS
 # ==============================================================================
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
+# Escape a value for use inside a double-quoted YAML scalar (mediamtx config).
+# Without this, a password containing " or \ breaks (or truncates) the config.
+yaml_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 cleanup() { log "Shutting down..."; pkill -P $$ 2>/dev/null; pkill -f "watchdog.py" 2>/dev/null; exit 0; }
 trap cleanup SIGTERM SIGINT
 
@@ -257,12 +265,14 @@ def run():
         resp = requests.get(GITHUB_API_URL, headers=headers, timeout=10)
         resp.raise_for_status()
         for item in [i for i in resp.json() if i['type']=='file' and i['name'].endswith('.png')]:
-            with requests.get(item['download_url'], stream=True) as r, open(os.path.join(DESTINATION_FOLDER, item['name']), 'wb') as f:
+            with requests.get(item['download_url'], stream=True, timeout=(5, 30)) as r, open(os.path.join(DESTINATION_FOLDER, item['name']), 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
-    except: pass
+    except Exception as e:
+        print(f"[Icons] Download skipped/failed: {e}")
 if __name__ == "__main__": run()
 EOF
-python3 /tmp/download_icons.py; rm /tmp/download_icons.py
+# Hard cap: a hung connection must never block the stream from starting
+timeout 180 python3 /tmp/download_icons.py; rm /tmp/download_icons.py
 
 mkdir -p "$ADS_BASE/topleft/DAY" "$ADS_BASE/topleft/NIGHT" "$ADS_BASE/topright/DAY" "$ADS_BASE/topright/NIGHT"
 
@@ -289,7 +299,7 @@ srt: no
 api: yes
 apiAddress: 127.0.0.1:9997
 authMethod: internal
-authInternalUsers: [{ user: $ADMIN_USER, pass: $ADMIN_PASS, permissions: [{ action: api }, { action: publish }, { action: read }] }]
+authInternalUsers: [{ user: "$(yaml_escape "$ADMIN_USER")", pass: "$(yaml_escape "$ADMIN_PASS")", permissions: [{ action: api }, { action: publish }, { action: read }] }]
 paths: { all_others: }
 EOF
     chmod 600 "$MEDIAMTX_CONF" 2>/dev/null
@@ -565,13 +575,15 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         while kill -0 $FFMPEG_PID 2>/dev/null; do
             LOOP_COUNT=$((LOOP_COUNT + 1))
 
-            # 1. ZOMBIE CHECK (mtime-based) - Only in Normal Mode
+            # 1. ZOMBIE CHECK (mtime-based) - runs in BOTH modes: a wedged BRB
+            # encoder used to go unrecovered for the whole camera outage since
+            # neither this check nor the watchdog covered fallback mode.
             # FFmpeg rewrites the -progress file every ~0.5s; if its mtime stops
             # changing for 12 consecutive checks the encoder is frozen. (mtime is
             # used instead of file size so the file can be safely truncated below
             # without breaking detection.)
             # Skip frozen detection for first 5 seconds after startup (initialization time)
-            if [ "$CURRENT_MODE" = "normal" ]; then
+            if true; then
                 FFMPEG_UPTIME=$(( $(date +%s) - FFMPEG_START_TIME ))
                 if [ $FFMPEG_UPTIME -gt 5 ]; then
                     CURRENT_MTIME=$(stat -c %Y "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)
@@ -618,7 +630,19 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             # 2. Audio Check
             if [ "$CURRENT_MODE" = "normal" ]; then
                 NEW_AUDIO=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
-                if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then log "Audio Change"; kill $FFMPEG_PID 2>/dev/null; sleep 2; FFMPEG_PID=""; break; fi
+                if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then
+                    log "Audio Change"
+                    kill $FFMPEG_PID 2>/dev/null
+                    # Confirm the old encoder is dead before respawning - two
+                    # encoders on the same stream key glitch the YouTube ingest
+                    for _ in 1 2 3 4 5 6 7 8 9 10; do
+                        kill -0 $FFMPEG_PID 2>/dev/null || break
+                        sleep 1
+                    done
+                    if kill -0 $FFMPEG_PID 2>/dev/null; then kill -9 $FFMPEG_PID 2>/dev/null; sleep 1; fi
+                    FFMPEG_PID=""
+                    break
+                fi
             fi
 
             # 3. Connection Health Check (Every 3s)
@@ -659,9 +683,22 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 # detour and respawn in normal mode; honor_restart_hold paces it.
                 log "FFmpeg stopped for a managed restart (Code $EXIT_CODE). Respawning..."
             elif [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
-                log "[Fallback] Stream died (Code $EXIT_CODE). Switching..."
-                CURRENT_MODE="fallback"
-                echo "fallback" > "$STREAM_MODE_FILE"
+                if check_rtsp_basic; then
+                    # Camera is fine - the failure is output-side (YouTube
+                    # ingest/encoder). The BRB stream pushes to the same output
+                    # and would fail identically, so retry normal mode with a
+                    # growing delay instead of flapping normal<->BRB at full
+                    # speed against the RTMP endpoint.
+                    if [ $(( $(date +%s) - ${FFMPEG_START_TIME:-0} )) -ge 60 ]; then OUTPUT_FAIL_COUNT=0; fi
+                    OUTPUT_FAIL_COUNT=$(( ${OUTPUT_FAIL_COUNT:-0} + 1 ))
+                    RETRY_DELAY=$((OUTPUT_FAIL_COUNT * 5)); [ $RETRY_DELAY -gt 60 ] && RETRY_DELAY=60
+                    log "[Fallback] Stream died (Code $EXIT_CODE) but camera is reachable - output-side failure. Retrying normal mode in ${RETRY_DELAY}s..."
+                    sleep $RETRY_DELAY
+                else
+                    log "[Fallback] Stream died (Code $EXIT_CODE). Switching..."
+                    CURRENT_MODE="fallback"
+                    echo "fallback" > "$STREAM_MODE_FILE"
+                fi
             elif [ "$CURRENT_MODE" = "fallback" ]; then
                  if check_rtsp_basic; then
                      log "[Fallback] Ready. Switching to Normal..."
@@ -733,7 +770,13 @@ else
                 YT_PID=$!
                 echo $YT_PID > "/config/youtube_restreamer.pid"
                 log "[Restreamer] YouTube leg started (PID: $YT_PID, audio: $AUDIO_MODE)"
+                YT_LOOPS=0
                 while kill -0 $YT_PID 2>/dev/null; do
+                    YT_LOOPS=$((YT_LOOPS + 1))
+                    # Cap progress file growth on long runs (~hourly at 2s/loop)
+                    if [ $((YT_LOOPS % 1800)) -eq 0 ] && [ "$(wc -c < "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)" -gt 10485760 ]; then
+                        : > "$FFMPEG_PROGRESS_FILE"
+                    fi
                     NEW_AUDIO=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
                     if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then
                         log "[Restreamer] Audio change ($AUDIO_MODE -> $NEW_AUDIO). Restarting YouTube leg..."

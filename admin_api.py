@@ -338,6 +338,10 @@ def set_audio_mode(mode):
         return False, "invalid mode"
     with open(AUDIO_MODE_FILE, "w") as f:
         f.write(mode)
+    # Don't interrupt the BRB keep-alive stream during a camera outage - audio
+    # modes don't apply to it; the saved mode applies when the camera returns.
+    if read_text(STREAM_MODE_FILE) == "fallback":
+        return True, "Mode saved; applies when the camera stream returns (BRB active)"
     # start.sh polls the file every second in direct mode and restarts on change;
     # nudging FFmpeg makes the switch immediate.
     ok, detail = signal_broadcast_restart(f"audio -> {mode}")

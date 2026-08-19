@@ -66,17 +66,37 @@ def log(message):
                 f.write(full_msg + "\n")
         except: pass
 
+# Piecewise approximation of the Canada/US border: (lon_min, lon_max, lat_min).
+# A point is Canadian if it falls in a segment's longitude band at or above the
+# segment's latitude. The old single-box test put Boston/Buffalo/Burlington in
+# "CA" and Halifax/Victoria/Thunder Bay in "US", silently querying the wrong
+# national alert feed. Border towns (Detroit/Windsor etc.) still need the
+# ALERT_COUNTRY override - no box can separate them.
+_CA_BORDER_SEGMENTS = [
+    (-141.0, -95.0, 49.0),   # BC-Manitoba (49th parallel)
+    (-126.0, -122.5, 48.2),  # Southern BC / Vancouver Island
+    (-95.0, -84.0, 48.0),    # NW Ontario (Thunder Bay)
+    (-84.0, -80.0, 42.5),    # SW Ontario (Windsor/London) vs Ohio
+    (-80.0, -78.5, 43.05),   # Niagara vs Buffalo
+    (-78.5, -76.5, 43.5),    # Lake Ontario north shore vs Rochester
+    (-76.5, -74.5, 44.1),    # Kingston / Thousand Islands vs Watertown
+    (-74.5, -71.5, 45.0),    # Montreal vs Plattsburgh/Burlington
+    (-71.5, -70.0, 45.2),    # Eastern Townships vs NH/VT
+    (-70.0, -67.0, 46.6),    # Quebec / northern NB vs Maine
+    (-67.0, -52.0, 43.3),    # Maritimes + Newfoundland
+]
+
+
 def detect_country():
-    # Explicit override wins: the lat/lon box heuristic below cannot cleanly
-    # separate southern Ontario/Quebec from New England, or the Maritimes from
-    # Maine. Set ALERT_COUNTRY=CA or ALERT_COUNTRY=US if you are near the border.
+    # Explicit override wins - set ALERT_COUNTRY=CA or ALERT_COUNTRY=US when
+    # you are close enough to the border that the approximation could miss.
     override = os.getenv("ALERT_COUNTRY", "").upper().strip()
     if override in ("CA", "US"):
         return override
     if 41.0 < LAT < 83.0 and -141.0 < LON < -50.0:
-        if LAT >= 49.0: return "CA"
-        if -85.0 < LON < -70.0: return "CA"   # southern Ontario / Quebec
-        if -70.0 <= LON < -59.0 and LAT > 43.4: return "CA"  # Maritimes (approx)
+        for lon_min, lon_max, lat_min in _CA_BORDER_SEGMENTS:
+            if lon_min <= LON < lon_max and LAT >= lat_min:
+                return "CA"
     return "US"
 
 @lru_cache(maxsize=32)
@@ -131,9 +151,11 @@ def classify_alert(title):
         alert_type = "WARNING"
 
     # --- STEP 2: Strict Color Lookup (Regex) ---
-    # We use regex \bWORD\b to ensure "REDUCED" doesn't trigger "RED"
+    # We use regex \bWORD\b to ensure "REDUCED" doesn't trigger "RED".
+    # "RED FLAG WARNING" is a routine NWS fire-weather product, not a
+    # colour-coded extreme alert - exempt it from the RED keyword.
 
-    if re.search(r'\bRED\b', title_upper):
+    if re.search(r'\bRED\b', title_upper) and "RED FLAG" not in title_upper:
         return alert_type, "extreme", "red"
 
     if re.search(r'\bORANGE\b', title_upper):
@@ -236,7 +258,10 @@ def create_wind_arrow(degrees, size=50, color="#FFFFFF"):
     img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     c = size // 2
-    points = [(c, 0), (size, size), (c, int(size * 0.75)), (0, size)]
+    # Inset the polygon so every vertex stays within the inscribed circle -
+    # a full-canvas arrow had its tail corners clipped at diagonal rotations
+    m = round(size * 0.15)
+    points = [(c, m), (size - m, size - m), (c, int(size * 0.62)), (m, size - m)]
     draw.polygon(points, fill=color)
     rotation = -(degrees + 180 - CAMERA_HEADING)
     return img.rotate(rotation, resample=Image.BICUBIC, expand=False)
@@ -302,7 +327,9 @@ def generate_weather_layer(width=900, height=350):
             for i, t in enumerate(hourly_times):
                 try:
                     if datetime.datetime.fromisoformat(t).hour == curr_hr:
-                        precip = hourly['precipitation_probability'][i]
+                        value = hourly['precipitation_probability'][i]
+                        # API can return null slots - avoid printing "Rain: None%"
+                        precip = value if value is not None else 0
                         break
                 except:
                     pass
@@ -352,48 +379,26 @@ def generate_weather(output_path, width=900, height=350):
     return False
 
 # ================= ALERT GENERATION =================
-def fetch_all_alerts_from_xml(zone_code):
-    """
-    Fetch ALL alerts from Environment Canada XML feed.
-    Returns list of (title, summary/issued_text) tuples.
-    """
-    xml_url = f"https://weather.gc.ca/rss/battleboard/{zone_code}_e.xml"
-    if DEBUG_MODE: log(f"[EC-Alert] Fetching XML: {xml_url}")
-    try:
-        r = requests.get(xml_url, timeout=5)
-        if r.status_code != 200:
-            return []
-        root = ET.fromstring(r.content)
-        ns = {'atom': 'http://www.w3.org/2005/Atom'}
+_EC_COLOUR_MAP = {
+    "red": ("red", "extreme"),
+    "orange": ("orange", "moderate"),
+    "yellow": ("yellow", "minor"),
+    "grey": ("grey", "low"),
+    "gray": ("grey", "low"),
+}
 
-        alerts = []
-        for entry in root.findall('atom:entry', ns):
-            title_elem = entry.find('atom:title', ns)
-            summary_elem = entry.find('atom:summary', ns)
-
-            if title_elem is not None:
-                title = title_elem.text
-                summary = summary_elem.text if summary_elem is not None else None
-
-                if title and "No watches or warnings" not in title:
-                    alerts.append((title, summary))
-
-        return alerts
-    except Exception as e:
-        if DEBUG_MODE: log(f"[EC-Alert] XML fetch error: {e}")
-        return []
-
-def fetch_title_and_time_from_xml(zone_code):
-    """Legacy function - returns only first alert for backward compatibility"""
-    alerts = fetch_all_alerts_from_xml(zone_code)
-    if alerts:
-        return alerts[0]
-    return None, None
 
 async def fetch_ec_alerts():
     """
     Fetch ALL Environment Canada alerts for the location.
     Returns list of tuples: [(title, color, issued_text, alert_type, severity), ...]
+
+    Reads alerts directly from env_canada's ec.alerts structure
+    ({category: {"label": ..., "value": [{"title", "date", "alertColourLevel",
+    "area", ...}]}}). Older code derived a battleboard zone code from a 'url'
+    field that env_canada >= 0.19 no longer provides, so EC alerts silently
+    never displayed. EC's own alertColourLevel takes priority over keyword
+    classification when present.
     """
     if not HAS_EC:
         return []
@@ -404,44 +409,40 @@ async def fetch_ec_alerts():
         if not ec.alerts:
             return []
 
-        zone_code = None
-        # First, find the zone code from any alert URL
-        for a_id, a_data in ec.alerts.items():
-            if 'value' in a_data and isinstance(a_data['value'], list) and len(a_data['value']) > 0:
-                alert_url = a_data['value'][0].get('url', '')
-                match = re.search(r'([a-z]{2}rm\d+)', alert_url)
-                if match:
-                    zone_code = match.group(1)
-                    break
-
-        if not zone_code:
-            if DEBUG_MODE: log("[EC-Alert] No zone code found in alerts")
-            return []
-
-        if DEBUG_MODE: log(f"[EC-Alert] Detected Zone: {zone_code}")
-
-        # Fetch ALL alerts from XML (authoritative source with proper titles/times)
-        xml_alerts = fetch_all_alerts_from_xml(zone_code)
-
-        if not xml_alerts:
-            if DEBUG_MODE: log("[EC-Alert] No alerts in XML feed")
-            return []
-
-        # Process each alert
         processed_alerts = []
-        for title, issued_text in xml_alerts:
-            alert_type, severity, base_color = classify_alert(title)
+        for category, cat_data in ec.alerts.items():
+            if category == "endings":
+                continue  # Expired-alert notices - don't show as active
+            if not isinstance(cat_data, dict):
+                continue
+            for item in (cat_data.get("value") or []):
+                if not isinstance(item, dict):
+                    continue
+                title = (item.get("title") or "").strip()
+                if not title or "No watches or warnings" in title:
+                    continue
+                area = (item.get("area") or "").strip()
+                display_title = f"{title}, {area}" if area else title
 
-            if DEBUG_MODE:
-                log(f"[EC-Alert] Title: {title} -> Type={alert_type}, Color={base_color}")
+                alert_type, severity, base_color = classify_alert(display_title)
 
-            processed_alerts.append((
-                title.upper(),
-                base_color,
-                issued_text,
-                alert_type,
-                severity
-            ))
+                # EC's own risk colour is authoritative when provided
+                colour = (item.get("alertColourLevel") or "").strip().lower()
+                if colour in _EC_COLOUR_MAP:
+                    base_color, severity = _EC_COLOUR_MAP[colour]
+
+                issued_text = item.get("date")
+
+                if DEBUG_MODE:
+                    log(f"[EC-Alert] {display_title} -> Type={alert_type}, Color={base_color}")
+
+                processed_alerts.append((
+                    display_title.upper(),
+                    base_color,
+                    issued_text,
+                    alert_type,
+                    severity
+                ))
 
         return processed_alerts
 
@@ -647,7 +648,15 @@ def draw_single_alert(draw, img, alert_data, y_offset, width, row_height, flash_
 
     return needs_flash
 
-def generate_alert_layer(width=900, height=150, flash_state="on"):
+def fetch_active_alerts():
+    """Fetch all active alerts for the configured location (EC or NWS)."""
+    country = detect_country()
+    if country == "CA":
+        return asyncio.run(fetch_ec_alerts()) if HAS_EC else []
+    return fetch_nws_alerts()
+
+
+def generate_alert_layer(width=900, height=150, flash_state="on", alerts=None):
     """
     Generate alert overlay supporting multiple stacked alerts.
 
@@ -655,14 +664,14 @@ def generate_alert_layer(width=900, height=150, flash_state="on"):
     Multiple alerts:
       - Region header (shared) at top
       - Half-height alert rows stacked below
-    """
-    country = detect_country()
 
-    # Fetch ALL alerts (both EC and NWS support multi-alert stacking)
-    if country == "CA":
-        alerts = asyncio.run(fetch_ec_alerts()) if HAS_EC else []
-    else:
-        alerts = fetch_nws_alerts()
+    Pass a pre-fetched `alerts` list to render multiple frames (e.g. the flash
+    on/off pair) from the same data - re-fetching for each frame let a failed
+    second fetch produce an off-frame with no banner, so the alert blinked out
+    of existence during the flash cycle.
+    """
+    if alerts is None:
+        alerts = fetch_active_alerts()
 
     # No alerts - return transparent image
     if not alerts:
@@ -752,22 +761,34 @@ def generate_alerts(output_path, width=900, height=150):
 
 def generate_combined(output_path, width=900, weather_height=350, alert_height=150):
     total_height = weather_height + alert_height
-    alert_img_on, _, needs_flash, is_statement = generate_alert_layer(width, alert_height, flash_state="on")
+    alerts = fetch_active_alerts()
+    alert_img_on, _, needs_flash, is_statement = generate_alert_layer(
+        width, alert_height, flash_state="on", alerts=alerts)
     weather_img = generate_weather_layer(width, weather_height)
 
+    # Both fetches failed: don't overwrite a good overlay with a blank one -
+    # the caller keeps the previous frame until the next successful refresh.
+    if weather_img is None and not alerts:
+        log("[Combined] Weather fetch failed and no alerts - keeping previous overlay")
+        return False
+
     if is_statement:
-        weather_y = alert_height // 2
+        # Anchor to the canvas bottom (the overlay is bottom-right aligned on
+        # the broadcast) so the compact statement doesn't leave a floating gap.
         content_height = alert_height // 2
+        weather_y = total_height - weather_height
+        alert_y = weather_y - content_height
     else:
-        weather_y = alert_height
         content_height = alert_height
+        weather_y = alert_height
+        alert_y = 0
 
     combined_on = Image.new('RGBA', (int(width), int(total_height)), (0, 0, 0, 0))
 
     if alert_img_on:
         if is_statement:
             alert_content = alert_img_on.crop((0, 0, int(width), content_height))
-            combined_on.paste(alert_content, (0, 0), alert_content)
+            combined_on.paste(alert_content, (0, alert_y), alert_content)
         else:
             combined_on.paste(alert_img_on, (0, 0), alert_img_on)
 
@@ -777,7 +798,9 @@ def generate_combined(output_path, width=900, weather_height=350, alert_height=1
     combined_on.save(output_path, "PNG", optimize=True)
 
     if needs_flash:
-        alert_img_off, _, _, _ = generate_alert_layer(width, alert_height, flash_state="off")
+        # Render the off-frame from the SAME alert data as the on-frame
+        alert_img_off, _, _, _ = generate_alert_layer(
+            width, alert_height, flash_state="off", alerts=alerts)
         combined_off = Image.new('RGBA', (int(width), int(total_height)), (0, 0, 0, 0))
         if alert_img_off:
             combined_off.paste(alert_img_off, (0, 0), alert_img_off)

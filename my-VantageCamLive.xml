@@ -109,7 +109,7 @@
 
   <!-- Debug -->
   <Config Name="Weather Debug" Target="WEATHER_DEBUG" Default="false" Mode="" Description="Enable verbose weather logging" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
-  <Config Name="FFmpeg Progress Log" Target="FFMPEG_PROGRESS_LOG" Default="false" Mode="" Description="Enable FFmpeg frame logging for stall detection. WARNING: File grows ~10MB/day. YouTube status API is the primary health check." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Alert Country" Target="ALERT_COUNTRY" Default="" Mode="" Description="Force alert source: CA (Environment Canada) or US (NWS). Recommended near the border; auto-detected when empty." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   
   <!-- Fallback Mode -->
   <Config Name="Fallback Mode" Target="FALLBACK_ENABLED" Default="true" Mode="" Description="Show 'We'll Be Right Back' screen when camera RTSP is unreachable (keeps YouTube stream alive instead of going offline)" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>

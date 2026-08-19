@@ -1148,9 +1148,12 @@ def run_watchdog():
                 logger.warning("Status check returned error - will retry")
 
             # Also check FFmpeg progress as secondary health indicator
-            progress_status = check_ffmpeg_progress()
-            if status == 'live' and progress_status is False:
-                logger.warning("FFmpeg progress check failed despite 'live' status - monitoring...")
+            # (skip while in fallback mode - the BRB encoder owns the file and
+            # transition windows would produce false stall warnings)
+            if not is_fallback_mode():
+                progress_status = check_ffmpeg_progress()
+                if status == 'live' and progress_status is False:
+                    logger.warning("FFmpeg progress check failed despite 'live' status - monitoring...")
 
             time.sleep(CHECK_INTERVAL)
 

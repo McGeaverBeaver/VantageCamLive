@@ -206,6 +206,9 @@ services:
       
       # === REQUIRED ===
       - RTSP_SOURCE=rtsp://user:pass@192.168.1.50:554/stream
+      # ADMIN_USER/ADMIN_PASS protect the Admin WebUI and the local RTSP output.
+      # Use letters/digits/-_. (the password is embedded in an RTSP URL in
+      # MediaMTX mode, so characters like @ : / can break authentication there).
       - ADMIN_USER=admin
       - ADMIN_PASS=change_me_please
       
@@ -296,6 +299,10 @@ When streaming only to YouTube (no local preview), the container uses an optimiz
 ## 📺 Fallback Mode (BRB Screen)
 
 When enabled, VantageCam automatically shows a **"We'll Be Right Back"** screen when your camera's RTSP stream becomes unavailable. This keeps your YouTube stream alive instead of going offline.
+
+> ℹ️ Fallback mode applies to **Direct-to-YouTube mode** (`ENABLE_LOCAL_STREAM=false`).
+> In MediaMTX mode, a camera outage stops the local RTSP feed and the YouTube leg
+> retries until the camera returns.
 
 ### How It Works
 
@@ -470,10 +477,14 @@ VantageCam supports government weather alerts from:
 
 | Priority | Examples | Display |
 |:---------|:---------|:--------|
-| 🔴 Extreme | Tornado Warning, Hurricane | Flashing red banner |
-| 🟠 Severe | Thunderstorm Warning, Blizzard | Solid orange banner |
-| 🟡 Moderate | Winter Storm Watch, Heat Advisory | Yellow banner |
-| ⚪ Minor | Frost Advisory, Air Quality | Gray banner |
+| 🔴 Extreme | Tornado, Severe Thunderstorm, Hurricane, Blizzard, Extreme Cold, Heat Warnings | Flashing red banner |
+| 🟠 Severe | Winter Storm / Snow Squall / Flash Flood Watches, unrecognized Warnings | Solid orange banner |
+| 🟡 Moderate | Advisories, other Watches | Yellow banner |
+| ⚪ Minor | Statements (compact), Ended notices | Gray banner |
+
+Environment Canada alerts carry an official colour level, which takes priority over
+the keyword classification above. Near the CA/US border, set `ALERT_COUNTRY=CA` or
+`US` to pin the alert source.
 
 ### Compact Statements
 
@@ -586,7 +597,7 @@ Long-duration events (Heat Waves, Air Quality Statements) display in a compact f
 | `WEATHER_LON` | - | Longitude |
 | `WEATHER_LOCATION` | - | Display name |
 | `WEATHER_TIMEZONE` | `America/Toronto` | Timezone |
-| `CAMERA_HEADING` | `N` | Wind arrow direction |
+| `CAMERA_HEADING` | `E` | Direction the camera faces (compass point or degrees) |
 | `ALERTS_UPDATE_INTERVAL` | `900` | Update interval (seconds) |
 | `ALERT_COUNTRY` | auto | Force alert source: `CA` (Environment Canada) or `US` (NWS). Recommended near the border. |
 

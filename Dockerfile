@@ -41,12 +41,14 @@ RUN if [ "$INCLUDE_INTEL" = "true" ]; then \
 ENV LIBVA_DRIVER_NAME=iHD
 
 # 3. Install Python libraries
+# env_canada is pinned: its alert data structure changed incompatibly in the
+# past (0.19 dropped the 'url' field weather.py once depended on) - bump the
+# pin deliberately, together with weather.py. geopy/aiohttp arrive as its
+# dependencies; ranges bound the rest for reproducible builds.
 RUN pip3 install --break-system-packages --no-cache-dir \
-    requests \
-    Pillow \
-    env_canada \
-    geopy \
-    aiohttp
+    "requests>=2.31,<3" \
+    "Pillow>=10.0,<13" \
+    "env_canada==0.19.1"
 
 # 4. Install MediaMTX
 RUN echo "Downloading MediaMTX ${MTX_VERSION} for ${ARCH}..." && \
@@ -81,6 +83,14 @@ PID_FILE="/config/youtube_restreamer.pid"
 if ! curl -sf http://localhost:9998/health > /dev/null 2>&1; then
     echo "FAIL: Audio API not responding"
     exit 1
+fi
+
+# The progress-file and PID checks below track the YouTube encoder leg; with
+# no YOUTUBE_KEY there is nothing writing them and the container would sit
+# permanently "unhealthy" (e.g. preview-only setups before going live).
+if [ -z "$YOUTUBE_KEY" ]; then
+    echo "OK (no YouTube leg configured)"
+    exit 0
 fi
 
 # Level 2: Check if FFmpeg process exists
