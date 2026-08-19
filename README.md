@@ -207,21 +207,45 @@ docker exec vantagecam python3 /ingest_probe.py --text "$YOUTUBE_URL"
 | **TCP FAILED** | The port is blocked before TLS is attempted | A firewall/ISP is blocking outbound `rtmps` 443 or `rtmp` 1935. Try the other ingest. |
 | **TLS FAILED** (works without verification) | Stale/missing CA trust store | Refresh `ca-certificates` in the image |
 | **TLS FAILED** (fails either way) | Something is terminating TLS on that port (deep packet inspection / transparent proxy) | Switch to `YOUTUBE_URL=rtmp://a.rtmp.youtube.com/live2` |
-| **All ok**, stream still won't start | The endpoint is fine, so the *key* is being rejected | Reset the key in YouTube Studio; make sure no other encoder is using it |
+| **All ok**, stream still won't start | The network path is fine, so the ingest is rejecting the *session* | Reset the key in YouTube Studio; make sure only one encoder is running |
+| **Stream key format** flagged | An invisible character (usually a `\r` from editing a template) is in `YOUTUBE_KEY` | Re-paste the key with no trailing space or newline |
 
-### Telling the two apart in the FFmpeg log
+### Why the FFmpeg error alone can't tell you
 
-The layer that fails is named in the error, and the two cases look different:
+With `rtmps://`, FFmpeg tunnels the **entire** RTMP session — handshake, connect,
+and publish (which is where the stream key is sent) — through one `tls://` context.
+Every read or write in that session reports failure through the same TLS error path,
+so a message like:
 
 ```
-# Stream key rejected — TLS succeeded, YouTube dropped the RTMP handshake:
-[rtmps @ ...] Cannot read RTMP handshake response
-Error opening output files: End of file
-
-# Network/TLS path broken — never got as far as RTMP:
 [tls @ ...] IO error: End of file
 Error opening output files: I/O error
 ```
+
+means only *"the ingest closed the connection at some point"*. It does **not** tell you
+whether that happened during the TLS handshake (network interception) or after your key
+was sent (key rejected). Do not conclude "it's not the key" from this message.
+
+To actually localise it, publish a synthetic test with verbose logging and no camera,
+overlays or competing publisher:
+
+```bash
+docker stop vantagecam
+docker run --rm --entrypoint ffmpeg ghcr.io/mcgeaverbeaver/vantagecamlive:latest \
+  -hide_banner -loglevel verbose -re \
+  -f lavfi -i testsrc2=s=1280x720:r=30 -f lavfi -i anullsrc=cl=stereo:r=44100 \
+  -c:v libx264 -preset veryfast -b:v 2500k -g 60 -c:a aac -b:a 128k -t 30 \
+  -f flv "$YOUTUBE_URL/YOUR_KEY"
+```
+
+| What you see | Meaning |
+|:-------------|:--------|
+| It streams, and YouTube Studio shows a preview | Key and ingest are both fine — the container's retry loop was the problem |
+| RTMP lines (`Handshaking...`, `Server version`) **before** the EOF | TLS came up; YouTube rejected the **session** → reset the stream key |
+| EOF with **no** RTMP lines at all | The TLS transport is being cut → network interception; try `rtmp://` on 1935 |
+
+Stopping the container first is essential — a second publisher on the same key produces
+the middle result and will mislead you.
 
 > ⚠️ **Only one encoder may use a stream key at a time.** If an older container is still running
 > (or several restarts overlapped), YouTube rejects the newcomer. Confirm with

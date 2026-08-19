@@ -838,6 +838,38 @@ def _count_music_files():
         return 0
 
 
+def _inspect_stream_key():
+    """Sanity-check YOUTUBE_KEY without ever revealing it.
+
+    A key pasted through a template editor can pick up a trailing CR, newline
+    or space. FFmpeg then publishes to a URL that is not the one you think,
+    and the ingest closes the session - which looks identical to every other
+    publishing failure. This catches that in one glance.
+    """
+    key = YOUTUBE_KEY
+    if not key:
+        return {"configured": False, "ok": None, "note": "YOUTUBE_KEY is not set"}
+    stripped = key.strip()
+    problems = []
+    if key != stripped:
+        problems.append("has leading/trailing whitespace (likely a stray newline or space from an edit)")
+    if any(ord(c) < 32 or ord(c) == 127 for c in key):
+        problems.append("contains control characters (e.g. a Windows carriage return)")
+    if " " in stripped:
+        problems.append("contains an internal space")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", stripped or "x"):
+        problems.append("contains characters outside the usual letters/digits/dashes")
+    if not (16 <= len(stripped) <= 64):
+        problems.append(f"is {len(stripped)} characters long (YouTube keys are typically 20-24)")
+    return {
+        "configured": True,
+        "ok": not problems,
+        "length": len(key),
+        "problems": problems,
+        "note": "looks well-formed" if not problems else "; ".join(problems),
+    }
+
+
 def build_config_view():
     """Effective configuration with every secret masked."""
     def mask(value):
@@ -1205,7 +1237,9 @@ class AdminHandler(BaseHTTPRequestHandler):
         elif path == "/api/ingest/check":
             url = os.getenv("YOUTUBE_URL", "rtmp://a.rtmp.youtube.com/live2")
             try:
-                self.send_json(ingest_probe.probe(url))
+                result = ingest_probe.probe(url)
+                result["stream_key"] = _inspect_stream_key()
+                self.send_json(result)
             except Exception as e:
                 self.send_json({"error": f"probe failed: {e}"}, 500)
         elif path == "/api/layout":

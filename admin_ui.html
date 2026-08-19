@@ -614,9 +614,15 @@ $("btnIngestCheck").addEventListener("click", async () => {
       ["TLS handshake", r.url_scheme === "rtmps" ? mark(r.tls) : '<span class="muted">n/a (plain rtmp)</span>'],
     ]) + `</table>`;
     if (r.tls_version) html += `<p class="muted" style="margin-top:8px">Negotiated ${esc(r.tls_version)}</p>`;
+    const k = r.stream_key || {};
+    if (k.configured) {
+      html += `<table class="kv" style="margin-top:10px">` + kv([
+        ["Stream key format", k.ok ? '<span class="ok">looks well-formed</span>' : `<span class="bad">${esc(k.note)}</span>`],
+      ]) + `</table>`;
+    }
     if (r.error) html += `<p class="bad" style="margin-top:8px">${esc(r.error)}</p>`;
     if (r.hint) html += `<p style="margin-top:8px">${esc(r.hint)}</p>`;
-    if (r.verdict === "ok") html += `<p class="ok" style="margin-top:8px">The publishing path is healthy. If the stream still will not start, the stream key is being rejected — reset it in YouTube Studio and make sure no other encoder is using it.</p>`;
+    if (r.verdict === "ok") html += `<p class="ok" style="margin-top:8px">The network path to the ingest is healthy (DNS, TCP and TLS all completed). If the stream still will not start, the ingest is rejecting the <b>session</b> rather than the connection — the usual causes are a rotated/expired stream key, another encoder already publishing with the same key, or the broadcast not being live-ready. Reset the key in YouTube Studio and confirm only one encoder is running.</p>`;
     el.innerHTML = html;
   } catch (e) { el.innerHTML = `<span class="bad">Probe failed: ${esc(e.message)}</span>`; }
   $("btnIngestCheck").disabled = false;
