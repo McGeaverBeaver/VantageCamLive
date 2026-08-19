@@ -44,6 +44,7 @@ from urllib.parse import urlparse, parse_qs
 
 import overlay_layout
 import ingest_probe
+import youtube_api
 
 # ==============================================================================
 #  CONFIGURATION
@@ -317,6 +318,38 @@ def parse_progress():
 
 
 RESTART_HOLD_FILE = os.path.join(CONFIG_DIR, "restart_hold")
+STREAM_PAUSED_FILE = os.path.join(CONFIG_DIR, "stream_paused")
+
+
+def broadcast_is_paused():
+    return os.path.exists(STREAM_PAUSED_FILE)
+
+
+def stop_broadcast():
+    """Stop publishing and keep it stopped (the supervisor honours the flag)."""
+    with open(STREAM_PAUSED_FILE, "w") as f:
+        f.write(str(int(time.time())))
+    pid = get_broadcast_pid()
+    if pid:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    log("Broadcast STOPPED by operator")
+    return True, "Broadcast stopped. It will stay stopped until you press Start."
+
+
+def start_broadcast():
+    """Clear the pause flag (and any pending backoff) so publishing resumes."""
+    existed = broadcast_is_paused()
+    for path in (STREAM_PAUSED_FILE, RESTART_HOLD_FILE):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    log("Broadcast STARTED by operator")
+    return True, ("Broadcast starting - the encoder comes up within a few seconds."
+                  if existed else "Broadcast was already running.")
 
 
 def signal_broadcast_restart(reason):
@@ -787,6 +820,7 @@ def build_status():
         "stream": {
             "mode": stream_mode,
             "restart_hold_seconds": hold_remaining,
+            "paused": broadcast_is_paused(),
             "broadcasting": pid is not None,
             "pid": pid,
             "uptime_seconds": int(now - started) if started else 0,
@@ -809,6 +843,7 @@ def build_status():
             "music": audio_mode == "music",
             "music_files": _count_music_files(),
         },
+        "youtube": youtube_broadcast_info(),
         "watchdog": {
             "enabled": WATCHDOG_ENABLED,
             "state": watchdog_state,
@@ -836,6 +871,50 @@ def _count_music_files():
         return sum(1 for n in os.listdir(MUSIC_DIR) if n.lower().endswith(".mp3"))
     except OSError:
         return 0
+
+
+# YouTube broadcast info is polled on a slow timer of its own: /api/status is
+# hit every few seconds by the browser, and the Data API has a daily quota.
+_youtube_cache = {"at": 0.0, "data": None}
+_youtube_lock = threading.Lock()
+YOUTUBE_POLL_SECONDS = 30.0
+
+
+def youtube_broadcast_info(force=False):
+    """Current broadcast (title, visibility, viewers), cached.
+
+    Never raises: the WebUI degrades to 'unavailable' with the reason rather
+    than failing the whole status payload.
+    """
+    yt = youtube_api.client()
+    if not yt.configured:
+        return {"configured": False,
+                "note": "Set YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET and "
+                        "YOUTUBE_REFRESH_TOKEN to control the broadcast from here."}
+    with _youtube_lock:
+        age = time.monotonic() - _youtube_cache["at"]
+        if not force and _youtube_cache["data"] is not None and age < YOUTUBE_POLL_SECONDS:
+            return _youtube_cache["data"]
+        try:
+            broadcast = yt.get_active_broadcast()
+            if broadcast is None:
+                data = {"configured": True, "available": True, "broadcast": None,
+                        "note": "No active or upcoming broadcast on this channel."}
+            else:
+                viewers = None
+                if broadcast.get("state") == "active":
+                    try:
+                        viewers = yt.get_viewers(broadcast["id"])
+                    except youtube_api.YouTubeError:
+                        viewers = None
+                data = {"configured": True, "available": True,
+                        "broadcast": {**broadcast, "viewers": viewers}}
+        except youtube_api.YouTubeError as e:
+            data = {"configured": True, "available": False,
+                    "kind": e.kind, "note": e.message}
+        _youtube_cache["at"] = time.monotonic()
+        _youtube_cache["data"] = data
+        return data
 
 
 def _inspect_stream_key():
@@ -1035,6 +1114,8 @@ class AdminHandler(BaseHTTPRequestHandler):
             self._serve_preview_stream()
         elif path == "/api/preview/snapshot":
             self._serve_preview_snapshot()
+        elif path == "/api/youtube/broadcast":
+            self.send_json(youtube_broadcast_info(force=True))
         elif path == "/api/layout":
             self.send_json({
                 "canvas": {"width": overlay_layout.CANVAS_W, "height": overlay_layout.CANVAS_H},
@@ -1218,6 +1299,14 @@ class AdminHandler(BaseHTTPRequestHandler):
                 mode = "unmuted" if read_text(AUDIO_MODE_FILE, "muted") == "muted" else "muted"
             ok, msg = set_audio_mode(mode)
             self.send_json({"ok": ok, "message": msg, "audio": mode}, 200 if ok else 400)
+        elif path == "/api/stream/start":
+            ok, msg = start_broadcast()
+            self.send_json({"ok": ok, "message": msg})
+        elif path == "/api/stream/stop":
+            ok, msg = stop_broadcast()
+            self.send_json({"ok": ok, "message": msg})
+        elif path == "/api/youtube/privacy":
+            self._handle_privacy(query)
         elif path == "/api/stream/restart":
             ok, msg = signal_broadcast_restart("manual restart from WebUI")
             self.send_json({"ok": ok, "message": msg}, 200 if ok else 409)
@@ -1254,6 +1343,33 @@ class AdminHandler(BaseHTTPRequestHandler):
             self._handle_ad_delete()
         else:
             self.send_json({"error": "not found"}, 404)
+
+    def _handle_privacy(self, query):
+        body = self._read_body(limit=4096)
+        try:
+            payload = json.loads(body or b"{}")
+        except ValueError:
+            self.send_json({"error": "invalid JSON"}, 400)
+            return
+        privacy = (payload.get("privacy") or (query.get("privacy") or [""])[0]).lower()
+        if privacy not in youtube_api.PRIVACY_CHOICES:
+            self.send_json({"error": f"privacy must be one of {', '.join(youtube_api.PRIVACY_CHOICES)}"}, 400)
+            return
+        try:
+            yt = youtube_api.client()
+            broadcast = yt.get_active_broadcast()
+            if not broadcast:
+                self.send_json({"ok": False,
+                                "message": "No active or upcoming broadcast found on this channel."}, 409)
+                return
+            applied = yt.set_privacy(broadcast["id"], privacy)
+            log(f"Broadcast visibility set to {applied}")
+            _youtube_cache["at"] = 0          # force the next poll to re-read
+            self.send_json({"ok": True, "privacy": applied,
+                            "message": f"Visibility set to {applied}."})
+        except youtube_api.YouTubeError as e:
+            self.send_json({"ok": False, "kind": e.kind, "message": e.message},
+                           501 if e.kind == "not_configured" else 502)
 
     def _handle_layout_save(self, query):
         body = self._read_body(limit=16384)

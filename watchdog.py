@@ -67,6 +67,7 @@ PROGRESS_FILE = "/config/ffmpeg_progress.txt"
 WATCHDOG_STATE_FILE = "/config/watchdog_state.json"
 LOG_FILE = "/config/watchdog.log"
 STREAM_MODE_FILE = "/config/stream_mode"  # Tracks "normal" or "fallback"
+STREAM_PAUSED_FILE = "/config/stream_paused"  # Operator stopped the broadcast
 RESTART_HOLD_FILE = "/config/restart_hold"  # Epoch timestamp start.sh waits for before respawn
 
 # ==============================================================================
@@ -167,6 +168,15 @@ def check_rtsp_source_health():
     except Exception as e:
         logger.error(f"RTSP health check error: {e}")
         return 'unknown'
+
+
+def is_paused():
+    """True when the operator stopped the broadcast from the Admin WebUI.
+
+    A deliberate stop must not look like a failure: without this the watchdog
+    would 'recover' the stream the operator just turned off.
+    """
+    return os.path.exists(STREAM_PAUSED_FILE)
 
 
 def is_fallback_mode():
@@ -912,6 +922,10 @@ def restart_stream():
     # If FFmpeg is not running at all, start.sh is already in its own retry
     # loop. Killing nothing and then imposing a restart hold would only freeze
     # a supervisor that is actively trying to recover.
+    if is_paused():
+        logger.info("Broadcast is stopped by the operator - not restarting.")
+        return False
+
     if get_ffmpeg_pid() is None:
         logger.info("FFmpeg is not running - start.sh is already retrying startup. "
                     "Skipping watchdog restart (no hold imposed).")
@@ -1093,6 +1107,12 @@ def run_watchdog():
 
     while True:
         try:
+            if is_paused():
+                logger.info("Broadcast is stopped by the operator - watchdog standing down")
+                consecutive_offline = 0
+                time.sleep(CHECK_INTERVAL)
+                continue
+
             status = check_stream_status()
 
             if status == 'live':

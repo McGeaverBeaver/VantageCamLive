@@ -4,7 +4,7 @@ FROM alpine:3.19
 ARG INCLUDE_INTEL=true
 ARG ARCH=amd64
 ARG MTX_VERSION=v1.15.0
-ARG VERSION=2.9.1
+ARG VERSION=2.10.0
 
 # Image metadata
 LABEL maintainer="McGeaverBeaver"
@@ -67,7 +67,8 @@ COPY admin_api.py /admin_api.py
 COPY admin_ui.html /admin_ui.html
 COPY overlay_layout.py /overlay_layout.py
 COPY ingest_probe.py /ingest_probe.py
-RUN sed -i 's/\r$//' /start.sh /weather.py /audio_api.py /watchdog.py /admin_api.py /overlay_layout.py /ingest_probe.py \
+COPY youtube_api.py /youtube_api.py
+RUN sed -i 's/\r$//' /start.sh /weather.py /audio_api.py /watchdog.py /admin_api.py /overlay_layout.py /ingest_probe.py /youtube_api.py \
     && chmod +x /start.sh /watchdog.py /admin_api.py /ingest_probe.py
 
 # 6. Create config directory and health check script
@@ -85,6 +86,12 @@ PID_FILE="/config/youtube_restreamer.pid"
 if ! curl -sf http://localhost:9998/health > /dev/null 2>&1; then
     echo "FAIL: Audio API not responding"
     exit 1
+fi
+
+# A deliberately stopped broadcast is a healthy container, not a failed one.
+if [ -f /config/stream_paused ]; then
+    echo "OK (broadcast stopped by operator)"
+    exit 0
 fi
 
 # The progress-file and PID checks below track the YouTube encoder leg; with

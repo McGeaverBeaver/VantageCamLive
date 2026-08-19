@@ -1,4 +1,4 @@
-# VantageCam Live v2.9.1
+# VantageCam Live v2.10.0
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker Build](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml/badge.svg)](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml)
@@ -20,7 +20,7 @@ Transform a standard security camera feed into a professional broadcast without 
 ## 📋 Table of Contents
 
 - [Key Features](#-key-features)
-- [What's New in v2.9.1](#-whats-new-in-v291)
+- [What's New in v2.10.0](#-whats-new-in-v2100)
 - [Admin WebUI & Stream Preview](#-admin-webui--stream-preview)
 - [Stream Won't Start?](#-stream-wont-start)
 - [Getting Started](#-getting-started)
@@ -67,6 +67,30 @@ Transform a standard security camera feed into a professional broadcast without 
 - **Exponential Backoff** — Smart retry delays prevent hammering YouTube
 - **Auto-PUBLIC** — Restores stream visibility after recovery via YouTube API
 - **Discord Alerts** — Instant notifications for offline/recovery/errors
+
+---
+
+## 🚀 What's New in v2.10.0
+
+### 🎛️ Broadcast Controls — Start, Stop and Visibility
+The dashboard now controls the broadcast itself, not just the encoder process:
+
+- **Start / Stop Broadcast** — Stop really means stopped. It writes `/config/stream_paused`,
+  which the supervisor, the watchdog and the Docker healthcheck all honour, so nothing
+  respawns the encoder behind your back and the container is not marked unhealthy. The
+  stop persists across container restarts.
+- **Visibility switch** — flip the live broadcast between **Public / Unlisted / Private**
+  straight from the dashboard (requires the YouTube API credentials you already need for
+  the watchdog's auto-PUBLIC feature).
+- **Live viewer count and broadcast title**, polled on a slow timer to respect the API quota.
+
+### 🖥️ One-Page Dashboard
+Live Preview and Broadcast Control now sit side by side at the top of the Dashboard, with
+health cards underneath — no more hopping between two pages to see the picture and act on it.
+
+### 🧹 Internal
+`youtube_api.py` factors the OAuth/token/broadcast logic out of `watchdog.py` so the watchdog
+and the WebUI share one implementation with consistent error classification.
 
 ---
 
@@ -189,6 +213,10 @@ bottom-right, identical scaling) and serves it as MJPEG to your browser.
 | `/api/layout` | GET/POST | Overlay positions (`?apply=true` also restarts the encoder) |
 | `/api/layout/reset` | POST | Restore default corner positions |
 | `/api/ingest/check` | POST | DNS → TCP → TLS probe of the configured ingest |
+| `/api/stream/start` \| `/api/stream/stop` | POST | Start/stop broadcasting (persists across restarts) |
+| `/api/stream/retry-now` | POST | Cancel a pending watchdog backoff |
+| `/api/youtube/broadcast` | GET | Current broadcast: title, visibility, viewers |
+| `/api/youtube/privacy` | POST | `{"privacy":"public\|unlisted\|private"}` |
 
 ---
 

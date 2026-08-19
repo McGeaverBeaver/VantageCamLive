@@ -114,6 +114,14 @@ trim_ffmpeg_log() {
 # so its exponential backoff actually delays the respawn (previously the loop
 # restarted FFmpeg instantly, making the backoff a no-op).
 RESTART_HOLD_FILE="$WORKDIR/restart_hold"
+
+# --- BROADCAST PAUSE ---
+# Created by the Admin WebUI "Stop Broadcast" button. While it exists the
+# supervisor keeps FFmpeg stopped instead of respawning it, so Stop actually
+# means stopped rather than "restarts in two seconds". Survives container
+# restarts on purpose: a deliberately stopped stream should stay stopped.
+STREAM_PAUSED_FILE="$WORKDIR/stream_paused"
+is_paused() { [ -f "$STREAM_PAUSED_FILE" ]; }
 honor_restart_hold() {
     local hold_until now wait_s
     hold_until=$(cat "$RESTART_HOLD_FILE" 2>/dev/null || echo 0)
@@ -615,12 +623,38 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 
     CURRENT_MODE="normal"
     FFMPEG_PID=""
+    PAUSE_ANNOUNCED=0
     LAST_MTIME=""
     FROZEN_COUNT=0
     LAST_FRAME=""
     VIDEO_FROZEN_COUNT=0
 
     while true; do
+        # Operator-requested stop: hold everything down until Start is pressed.
+        if is_paused; then
+            if [ -n "$FFMPEG_PID" ] && kill -0 $FFMPEG_PID 2>/dev/null; then
+                log "[Control] Broadcast stopped by operator - terminating FFmpeg (PID $FFMPEG_PID)"
+                kill $FFMPEG_PID 2>/dev/null
+                for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 $FFMPEG_PID 2>/dev/null || break; sleep 1; done
+                kill -9 $FFMPEG_PID 2>/dev/null
+            fi
+            if [ "$PAUSE_ANNOUNCED" != "1" ]; then
+                log "[Control] Broadcast is STOPPED. Press Start in the Admin WebUI to resume."
+                echo "stopped" > "$STREAM_MODE_FILE"
+                PAUSE_ANNOUNCED=1
+            fi
+            FFMPEG_PID=""
+            sleep 2
+            continue
+        fi
+        if [ "$PAUSE_ANNOUNCED" = "1" ]; then
+            log "[Control] Broadcast resumed by operator."
+            PAUSE_ANNOUNCED=0
+            CURRENT_MODE="normal"
+            echo "normal" > "$STREAM_MODE_FILE"
+            rm -f "$RESTART_HOLD_FILE"
+        fi
+
         if [ -z "$FFMPEG_PID" ] || ! kill -0 $FFMPEG_PID 2>/dev/null; then
             if [ "$CURRENT_MODE" = "normal" ]; then
                 honor_restart_hold
@@ -752,6 +786,9 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 LAST_FRAME=""
             fi
 
+            # 1b. Operator stop request - leave the monitor loop at once
+            if is_paused; then break; fi
+
             # 2. Audio Check
             if [ "$CURRENT_MODE" = "normal" ]; then
                 NEW_AUDIO=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
@@ -869,6 +906,7 @@ else
             fi
             LOCAL_URL="rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live"
             while true; do
+                if is_paused; then sleep 2; continue; fi
                 honor_restart_hold
                 trim_ffmpeg_log
                 AUDIO_MODE=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
@@ -897,6 +935,10 @@ else
                 log "[Restreamer] YouTube leg started (PID: $YT_PID, audio: $AUDIO_MODE)"
                 YT_LOOPS=0
                 while kill -0 $YT_PID 2>/dev/null; do
+                    if is_paused; then
+                        log "[Control] Broadcast stopped by operator - terminating YouTube leg"
+                        kill $YT_PID 2>/dev/null; break
+                    fi
                     YT_LOOPS=$((YT_LOOPS + 1))
                     # Cap progress file growth on long runs (~hourly at 2s/loop)
                     if [ $((YT_LOOPS % 1800)) -eq 0 ] && [ "$(wc -c < "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)" -gt 10485760 ]; then
