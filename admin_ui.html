@@ -9,36 +9,79 @@
     --bg: #0d1117; --panel: #161b22; --panel2: #1c2129; --border: #2d333b;
     --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --green: #3fb950;
     --red: #f85149; --orange: #d29922; --radius: 10px;
+    --sidebar: 232px; --header: 56px;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header {
-    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-    padding: 14px 22px; background: var(--panel); border-bottom: 1px solid var(--border);
-    position: sticky; top: 0; z-index: 10;
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
   }
-  header h1 { font-size: 18px; font-weight: 600; }
-  header h1 span { color: var(--accent); }
+
+  /* ---------- header ---------- */
+  header {
+    position: fixed; top: 0; left: 0; right: 0; height: var(--header); z-index: 30;
+    display: flex; align-items: center; gap: 10px; padding: 0 16px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; white-space: nowrap; }
+  .brand span { color: var(--accent); }
+  #menuBtn { display: none; background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; padding: 4px 8px; }
+  .pills { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: 1; }
+  .pills::-webkit-scrollbar { display: none; }
   .pill {
-    padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    padding: 3px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap;
     border: 1px solid var(--border); background: var(--panel2); color: var(--muted);
   }
   .pill.live { background: rgba(63,185,80,.15); color: var(--green); border-color: var(--green); }
   .pill.warn { background: rgba(210,153,34,.15); color: var(--orange); border-color: var(--orange); }
   .pill.err  { background: rgba(248,81,73,.15); color: var(--red); border-color: var(--red); }
-  .spacer { flex: 1; }
-  main { max-width: 1400px; margin: 0 auto; padding: 20px; display: grid; gap: 18px; }
-  .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
-  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+
+  /* ---------- sidebar ---------- */
+  nav#sidebar {
+    position: fixed; top: var(--header); bottom: 0; left: 0; width: var(--sidebar); z-index: 20;
+    background: var(--panel); border-right: 1px solid var(--border);
+    padding: 12px 10px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 9px 12px; border-radius: 7px; border: none; background: none;
+    color: var(--muted); font-size: 13.5px; text-align: left; cursor: pointer;
+  }
+  .nav-item:hover { background: var(--panel2); color: var(--text); }
+  .nav-item.active { background: rgba(88,166,255,.14); color: var(--accent); font-weight: 600; }
+  .nav-item .ico { width: 18px; text-align: center; flex: none; }
+  .nav-item .dot { margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: var(--red); display: none; }
+  .nav-item.alert .dot { display: block; }
+  .nav-sep { margin: 10px 12px 4px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: #576069; }
+  #navFooter { margin-top: auto; padding: 10px 12px; font-size: 11px; color: #576069; border-top: 1px solid var(--border); }
+
+  /* ---------- main ---------- */
+  main {
+    position: fixed; top: var(--header); left: var(--sidebar); right: 0; bottom: 0;
+    overflow-y: auto; padding: 20px;
+  }
+  .view { display: none; max-width: 1280px; margin: 0 auto; }
+  .view.active { display: block; }
+  .view-head { margin-bottom: 16px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .view-head h1 { font-size: 19px; font-weight: 600; }
+  .view-head p { color: var(--muted); font-size: 13px; }
+
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 16px; }
   .panel-head {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel2);
   }
-  .panel-head h2 { font-size: 14px; font-weight: 600; }
+  .panel-head h2 { font-size: 13.5px; font-weight: 600; }
   .panel-body { padding: 16px; }
+  .spacer { flex: 1; }
+
   button {
     background: var(--panel2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 6px; padding: 6px 14px; font-size: 13px; cursor: pointer;
+    border-radius: 6px; padding: 6px 13px; font-size: 13px; cursor: pointer;
   }
   button:hover { border-color: var(--accent); }
   button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
@@ -50,180 +93,291 @@
     background: var(--panel2); color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 5px 8px; font-size: 13px;
   }
-  /* Preview */
-  #previewBox {
-    position: relative; background: #000; border-radius: 6px; overflow: hidden;
-    aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center;
-  }
+
+  /* preview */
+  #previewBox { position: relative; background: #000; border-radius: 6px; overflow: hidden; aspect-ratio: 16/9;
+                display: flex; align-items: center; justify-content: center; }
   #previewBox img { width: 100%; height: 100%; object-fit: contain; display: none; }
   #previewOffMsg { color: var(--muted); text-align: center; padding: 30px; max-width: 460px; }
   #previewOffMsg b { color: var(--text); }
-  .preview-stats { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: 12px; }
+  .preview-stats { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: 12px; }
   .preview-stats b { color: var(--text); font-weight: 600; }
-  /* Key-value tables */
+
   table.kv { width: 100%; border-collapse: collapse; }
   table.kv td { padding: 4px 0; vertical-align: top; }
   table.kv td:first-child { color: var(--muted); width: 46%; padding-right: 10px; }
-  table.kv td:last-child { text-align: right; font-variant-numeric: tabular-nums; word-break: break-all; }
+  table.kv td:last-child { text-align: right; font-variant-numeric: tabular-nums; word-break: break-word; }
   .ok { color: var(--green); } .bad { color: var(--red); } .mid { color: var(--orange); }
-  /* Overlays */
+
+  .banner { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 8px;
+            border: 1px solid var(--red); background: rgba(248,81,73,.10); margin-bottom: 16px; }
+  .banner.warn { border-color: var(--orange); background: rgba(210,153,34,.10); }
+  .banner .bico { font-size: 16px; line-height: 1.2; }
+  .banner b { display: block; margin-bottom: 3px; }
+  .banner p { font-size: 12.5px; color: var(--muted); }
+  .banner code { background: var(--panel2); padding: 1px 5px; border-radius: 3px; font-size: 12px; color: var(--text); }
+
   .overlay-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
   .overlay-item { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
   .overlay-item img { width: 100%; border-radius: 4px; background: repeating-conic-gradient(#222 0% 25%, #333 0% 50%) 0 0/16px 16px; }
   .overlay-item .cap { font-size: 12px; color: var(--muted); margin-top: 6px; text-align: center; }
-  /* Ads */
+
   .ad-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
   .ad-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); margin-top: 12px; }
   .ad-item { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; text-align: center; }
   .ad-item img { width: 100%; height: 90px; object-fit: contain; background: repeating-conic-gradient(#222 0% 25%, #333 0% 50%) 0 0/16px 16px; border-radius: 4px; }
   .ad-item .name { font-size: 11px; color: var(--muted); margin: 6px 0; word-break: break-all; }
   .upload-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-  /* Logs */
-  #logView {
-    background: #0a0d12; border: 1px solid var(--border); border-radius: 6px;
-    padding: 10px; font: 12px/1.5 ui-monospace, "Cascadia Code", Menlo, monospace;
-    height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all; color: #9da9b5;
+
+  /* layout editor */
+  #layoutCanvas {
+    position: relative; width: 100%; aspect-ratio: 16/9; background: #000;
+    border: 1px solid var(--border); border-radius: 6px; overflow: hidden; touch-action: none;
+    background-image: linear-gradient(45deg,#14181e 25%,transparent 25%,transparent 75%,#14181e 75%),
+                      linear-gradient(45deg,#14181e 25%,transparent 25%,transparent 75%,#14181e 75%);
+    background-size: 32px 32px; background-position: 0 0, 16px 16px;
   }
-  #toast {
-    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+  #layoutBg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; display: none; }
+  /* Sits at the bottom rather than centred so it never prints through the
+     overlay boxes the operator is positioning. */
+  #layoutBgMsg { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+                 color: var(--muted); font-size: 12px; text-align: center; white-space: nowrap;
+                 background: rgba(13,17,23,.82); border: 1px solid var(--border);
+                 border-radius: 999px; padding: 5px 14px; pointer-events: none; max-width: 92%; }
+  .lbox { position: absolute; border: 2px solid var(--accent); border-radius: 3px;
+          background: rgba(88,166,255,.12); cursor: move; box-sizing: border-box; }
+  .lbox.disabled { border-color: var(--muted); background: rgba(139,148,158,.10); opacity: .5; }
+  .lbox.sel { border-color: var(--green); background: rgba(63,185,80,.16); z-index: 5; }
+  .lbox img { width: 100%; height: 100%; object-fit: contain; object-position: left top; pointer-events: none; }
+  .lbox .tag { position: absolute; top: -1px; left: -1px; background: var(--accent); color: #04121f;
+               font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 2px 0 3px 0;
+               pointer-events: none; white-space: nowrap; }
+  .lbox.disabled .tag { background: var(--muted); color: #0d1117; }
+  .lbox.sel .tag { background: var(--green); }
+  .lbox .grip { position: absolute; right: -7px; bottom: -7px; width: 16px; height: 16px;
+                background: var(--accent); border: 2px solid var(--bg); border-radius: 3px; cursor: nwse-resize; }
+  .lbox.sel .grip { background: var(--green); }
+  .layout-rows { display: grid; gap: 8px; margin-top: 14px; }
+  .layout-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+                background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
+  .layout-row .nm { font-weight: 600; min-width: 165px; }
+  .layout-row label { color: var(--muted); font-size: 12px; }
+  .layout-row input[type=number] { width: 76px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+  #logView { background: #0a0d12; border: 1px solid var(--border); border-radius: 6px; padding: 10px;
+    font: 12px/1.5 ui-monospace, Menlo, monospace; height: 62vh; overflow: auto;
+    white-space: pre-wrap; word-break: break-all; color: #9da9b5; }
+
+  #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
     background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
-    padding: 10px 18px; font-size: 13px; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 50;
-    max-width: 90vw;
-  }
+    padding: 10px 18px; font-size: 13px; opacity: 0; transition: opacity .25s;
+    pointer-events: none; z-index: 50; max-width: 90vw; }
   #toast.show { opacity: 1; }
   .muted { color: var(--muted); font-size: 12px; }
-  @media (max-width: 700px) { main { padding: 12px; } }
+  #scrim { display: none; position: fixed; inset: var(--header) 0 0 0; background: rgba(0,0,0,.55); z-index: 19; }
+
+  @media (max-width: 860px) {
+    :root { --sidebar: 0px; }
+    #menuBtn { display: block; }
+    nav#sidebar { width: 232px; transform: translateX(-100%); transition: transform .2s; }
+    body.nav-open nav#sidebar { transform: translateX(0); }
+    body.nav-open #scrim { display: block; }
+    main { left: 0; padding: 14px; }
+    .brand { font-size: 14px; }
+  }
 </style>
 </head>
 <body>
+
 <header>
-  <h1>&#128249; VantageCam <span>Admin</span></h1>
-  <span class="pill" id="pillStream">…</span>
-  <span class="pill" id="pillMode">…</span>
-  <span class="pill" id="pillCamera">…</span>
-  <span class="pill" id="pillAudio">…</span>
-  <span class="spacer"></span>
-  <button id="btnRestart" class="danger" title="Signals the broadcast FFmpeg to restart (the supervisor loop respawns it within seconds)">&#8635; Restart Stream</button>
+  <button id="menuBtn" aria-label="Menu">&#9776;</button>
+  <div class="brand">&#128249; VantageCam <span>Admin</span></div>
+  <div class="pills">
+    <span class="pill" id="pillStream">…</span>
+    <span class="pill" id="pillMode">…</span>
+    <span class="pill" id="pillCamera">…</span>
+    <span class="pill" id="pillAudio">…</span>
+  </div>
+  <button id="btnRestart" class="danger" title="Restart the broadcast encoder">&#8635;</button>
 </header>
 
+<nav id="sidebar">
+  <button class="nav-item active" data-view="dashboard"><span class="ico">&#128202;</span> Dashboard</button>
+  <button class="nav-item" data-view="preview"><span class="ico">&#127916;</span> Live Preview</button>
+  <div class="nav-sep">Production</div>
+  <button class="nav-item" data-view="layout"><span class="ico">&#128207;</span> Overlay Layout</button>
+  <button class="nav-item" data-view="sponsors"><span class="ico">&#128226;</span> Sponsors</button>
+  <button class="nav-item" data-view="weather"><span class="ico">&#127780;</span> Weather &amp; Alerts</button>
+  <button class="nav-item" data-view="audio"><span class="ico">&#128266;</span> Audio</button>
+  <div class="nav-sep">System</div>
+  <button class="nav-item" data-view="diagnostics"><span class="ico">&#129514;</span> Diagnostics<span class="dot"></span></button>
+  <button class="nav-item" data-view="logs"><span class="ico">&#128220;</span> Logs</button>
+  <button class="nav-item" data-view="settings"><span class="ico">&#9881;</span> Settings</button>
+  <div id="navFooter">VantageCam Live</div>
+</nav>
+<div id="scrim"></div>
+
 <main>
-  <!-- PREVIEW -->
-  <div class="panel">
-    <div class="panel-head">
-      <h2>&#127916; Stream Preview</h2>
-      <span class="muted">exactly what goes to air &mdash; camera + sponsor + weather overlays</span>
-      <span class="spacer"></span>
-      <select id="previewSource" title="Preview source">
-        <option value="auto">Auto (mirror broadcast)</option>
-        <option value="camera">Camera</option>
-        <option value="brb">BRB screen</option>
-      </select>
-      <button id="btnPreviewStart" class="primary">&#9654; Start Preview</button>
-      <button id="btnPreviewStop" disabled>&#9632; Stop Preview</button>
+  <!-- ============ DASHBOARD ============ -->
+  <section class="view active" id="view-dashboard">
+    <div class="view-head"><h1>Dashboard</h1><p>Health of the broadcast at a glance.</p></div>
+    <div id="alertZone"></div>
+    <div class="grid">
+      <div class="panel"><div class="panel-head"><h2>&#128225; Broadcast</h2></div>
+        <div class="panel-body"><table class="kv" id="tblStream"></table></div></div>
+      <div class="panel"><div class="panel-head"><h2>&#128247; Camera</h2></div>
+        <div class="panel-body"><table class="kv" id="tblCamera"></table></div></div>
+      <div class="panel"><div class="panel-head"><h2>&#128737; Watchdog</h2></div>
+        <div class="panel-body"><table class="kv" id="tblWatchdog"></table></div></div>
+      <div class="panel"><div class="panel-head"><h2>&#128421; System</h2></div>
+        <div class="panel-body"><table class="kv" id="tblSystem"></table></div></div>
     </div>
-    <div class="panel-body">
-      <div id="previewBox">
-        <img id="previewImg" alt="stream preview">
-        <div id="previewOffMsg">
-          <b>Preview is off.</b><br>
-          Starting it spawns a separate low-FPS FFmpeg pipeline that composes the
-          same overlays as the broadcast &mdash; the live stream is never touched.
-          It stops automatically after <span id="idleTimeoutLabel">120</span>s
-          without viewers to save CPU cycles.
+  </section>
+
+  <!-- ============ PREVIEW ============ -->
+  <section class="view" id="view-preview">
+    <div class="view-head"><h1>Live Preview</h1>
+      <p>The exact composed output, rendered by a separate pipeline that never touches the broadcast.</p></div>
+    <div class="panel">
+      <div class="panel-head">
+        <select id="previewSource" title="Preview source">
+          <option value="auto">Auto (mirror broadcast)</option>
+          <option value="camera">Camera</option>
+          <option value="brb">BRB screen</option>
+        </select>
+        <button id="btnPreviewStart" class="primary">&#9654; Start</button>
+        <button id="btnPreviewStop" disabled>&#9632; Stop</button>
+        <span class="spacer"></span>
+        <span class="muted">auto-stops after <span id="idleTimeoutLabel">120</span>s idle</span>
+      </div>
+      <div class="panel-body">
+        <div id="previewBox">
+          <img id="previewImg" alt="stream preview">
+          <div id="previewOffMsg">
+            <b>Preview is off.</b><br>
+            Starting it spawns a separate low-FPS FFmpeg pipeline composing the same overlays as
+            the broadcast. Stop it any time to release the CPU.
+          </div>
+        </div>
+        <div class="preview-stats" id="previewStats"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LAYOUT ============ -->
+  <section class="view" id="view-layout">
+    <div class="view-head"><h1>Overlay Layout</h1>
+      <p>Drag to move, drag the corner to resize. Coordinates are in the 2560&times;1440 canvas, so the
+         layout looks identical at 1080p, 1440p or 4K.</p></div>
+    <div class="panel">
+      <div class="panel-head">
+        <button id="btnLayoutReset">&#8635; Defaults</button>
+        <button id="btnLayoutSave">&#128190; Save</button>
+        <button id="btnLayoutApply" class="primary">&#128190; Save &amp; Apply to Stream</button>
+        <span class="spacer"></span>
+        <span class="muted" id="layoutHint">Start the preview to position against the live picture</span>
+      </div>
+      <div class="panel-body">
+        <div id="layoutCanvas">
+          <img id="layoutBg" alt="">
+          <div id="layoutBgMsg">Start the Live Preview to position overlays against the real picture.</div>
+        </div>
+        <div class="layout-rows" id="layoutRows"></div>
+        <p class="muted" style="margin-top:10px">
+          Saving restarts the preview. <b>Save &amp; Apply</b> also restarts the broadcast encoder
+          (a few seconds of interruption) because FFmpeg fixes its filter graph at launch.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SPONSORS ============ -->
+  <section class="view" id="view-sponsors">
+    <div class="view-head"><h1>Sponsors</h1><p>Logos rotate automatically by slot and day/night mode.</p></div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="ad-tabs">
+          <button class="ad-tab active" data-slot="topleft" data-mode="DAY">TL &middot; Day</button>
+          <button class="ad-tab" data-slot="topleft" data-mode="NIGHT">TL &middot; Night</button>
+          <button class="ad-tab" data-slot="topright" data-mode="DAY">TR &middot; Day</button>
+          <button class="ad-tab" data-slot="topright" data-mode="NIGHT">TR &middot; Night</button>
         </div>
       </div>
-      <div class="preview-stats" id="previewStats"></div>
+      <div class="panel-body">
+        <div class="ad-grid" id="adGrid"></div>
+        <div class="upload-row">
+          <input type="file" id="adFile" accept=".png,.jpg,.jpeg,.webp">
+          <button id="btnAdUpload" class="primary">&#8679; Upload to <span id="uploadTargetLabel">TL &middot; Day</span></button>
+          <span class="muted">PNG / JPG / WebP &middot; max 15&nbsp;MB &middot; picked up on next rotation</span>
+        </div>
+      </div>
     </div>
-  </div>
+  </section>
 
-  <!-- STATUS CARDS -->
-  <div class="grid">
+  <!-- ============ WEATHER ============ -->
+  <section class="view" id="view-weather">
+    <div class="view-head"><h1>Weather &amp; Alerts</h1><p>Rendered overlay images, served straight from disk.</p></div>
     <div class="panel">
-      <div class="panel-head"><h2>&#128225; Broadcast</h2></div>
-      <div class="panel-body"><table class="kv" id="tblStream"></table></div>
+      <div class="panel-head">
+        <button id="btnWeatherRefresh">&#8635; Refresh Weather Now</button>
+        <button id="btnOverlayReload">&#128260; Reload Images</button>
+      </div>
+      <div class="panel-body"><div class="overlay-grid" id="overlayGrid"></div></div>
     </div>
+  </section>
+
+  <!-- ============ AUDIO ============ -->
+  <section class="view" id="view-audio">
+    <div class="view-head"><h1>Audio</h1><p>Changing the mode restarts the encoder to re-map the audio track.</p></div>
     <div class="panel">
-      <div class="panel-head"><h2>&#128247; Camera</h2></div>
-      <div class="panel-body"><table class="kv" id="tblCamera"></table></div>
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h2>&#128266; Audio</h2></div>
       <div class="panel-body">
         <table class="kv" id="tblAudio"></table>
-        <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap">
+        <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap">
           <button data-audio="muted">&#128263; Mute</button>
           <button data-audio="unmuted">&#128264; Camera Audio</button>
           <button data-audio="music">&#127925; Music</button>
         </div>
       </div>
     </div>
+  </section>
+
+  <!-- ============ DIAGNOSTICS ============ -->
+  <section class="view" id="view-diagnostics">
+    <div class="view-head"><h1>Diagnostics</h1>
+      <p>Checks the publishing path one layer at a time, so a blocked port, a broken TLS path and a
+         rejected stream key are told apart instead of all surfacing as "I/O error".</p></div>
     <div class="panel">
-      <div class="panel-head"><h2>&#128737;&#65039; Watchdog</h2></div>
-      <div class="panel-body"><table class="kv" id="tblWatchdog"></table></div>
+      <div class="panel-head">
+        <button id="btnIngestCheck" class="primary">&#129517; Test Ingest Connection</button>
+        <span class="spacer"></span><span class="muted">safe to run while live &mdash; sends no stream key</span>
+      </div>
+      <div class="panel-body"><div id="ingestResult" class="muted">Not run yet.</div></div>
     </div>
+  </section>
+
+  <!-- ============ LOGS ============ -->
+  <section class="view" id="view-logs">
+    <div class="view-head"><h1>Logs</h1><p>Stream keys and camera credentials are redacted automatically.</p></div>
     <div class="panel">
-      <div class="panel-head"><h2>&#128421;&#65039; System</h2></div>
-      <div class="panel-body"><table class="kv" id="tblSystem"></table></div>
-    </div>
-  </div>
-
-  <!-- OVERLAYS -->
-  <div class="panel">
-    <div class="panel-head">
-      <h2>&#127912; Current Overlays</h2>
-      <span class="muted">served straight from disk &mdash; zero encoding cost</span>
-      <span class="spacer"></span>
-      <button id="btnWeatherRefresh">&#8635; Refresh Weather Now</button>
-      <button id="btnOverlayReload">&#128260; Reload Images</button>
-    </div>
-    <div class="panel-body">
-      <div class="overlay-grid" id="overlayGrid"></div>
-    </div>
-  </div>
-
-  <!-- SPONSORS -->
-  <div class="panel">
-    <div class="panel-head">
-      <h2>&#128226; Sponsor Logos</h2>
-      <span class="spacer"></span>
-      <div class="ad-tabs">
-        <button class="ad-tab active" data-slot="topleft" data-mode="DAY">TL &middot; Day</button>
-        <button class="ad-tab" data-slot="topleft" data-mode="NIGHT">TL &middot; Night</button>
-        <button class="ad-tab" data-slot="topright" data-mode="DAY">TR &middot; Day</button>
-        <button class="ad-tab" data-slot="topright" data-mode="NIGHT">TR &middot; Night</button>
+      <div class="panel-head">
+        <select id="logName">
+          <option value="ffmpeg">ffmpeg.log</option>
+          <option value="watchdog">watchdog.log</option>
+          <option value="weather">weather_debug.log</option>
+        </select>
+        <label class="muted"><input type="checkbox" id="logAuto"> auto-refresh</label>
+        <button id="btnLogRefresh">&#8635; Refresh</button>
       </div>
+      <div class="panel-body"><div id="logView">Select a log and press Refresh.</div></div>
     </div>
-    <div class="panel-body">
-      <div class="ad-grid" id="adGrid"></div>
-      <div class="upload-row">
-        <input type="file" id="adFile" accept=".png,.jpg,.jpeg,.webp">
-        <button id="btnAdUpload" class="primary">&#8679; Upload to <span id="uploadTargetLabel">TL &middot; Day</span></button>
-        <span class="muted">PNG / JPG / WebP &middot; max 15&nbsp;MB &middot; picked up on next rotation</span>
-      </div>
-    </div>
-  </div>
+  </section>
 
-  <!-- LOGS -->
-  <div class="panel">
-    <div class="panel-head">
-      <h2>&#128220; Logs</h2>
-      <span class="spacer"></span>
-      <select id="logName">
-        <option value="watchdog">watchdog.log</option>
-        <option value="ffmpeg">ffmpeg.log</option>
-        <option value="weather">weather_debug.log</option>
-      </select>
-      <label class="muted"><input type="checkbox" id="logAuto"> auto-refresh</label>
-      <button id="btnLogRefresh">&#8635; Refresh</button>
-    </div>
-    <div class="panel-body"><div id="logView">Select a log and press Refresh.</div></div>
-  </div>
-
-  <!-- CONFIG -->
-  <div class="panel">
-    <div class="panel-head"><h2>&#9881;&#65039; Effective Configuration <span class="muted">(secrets masked)</span></h2></div>
-    <div class="panel-body"><table class="kv" id="tblConfig"></table></div>
-  </div>
+  <!-- ============ SETTINGS ============ -->
+  <section class="view" id="view-settings">
+    <div class="view-head"><h1>Settings</h1><p>Effective configuration. Secrets are masked; change these via the container environment.</p></div>
+    <div class="panel"><div class="panel-body"><table class="kv" id="tblConfig"></table></div></div>
+  </section>
 </main>
 
 <div id="toast"></div>
@@ -231,10 +385,9 @@
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-let statusData = null;
-let previewActive = false;
-let currentSlot = "topleft", currentMode = "DAY";
-let toastTimer = null;
+let statusData = null, previewActive = false;
+let currentSlot = "topleft", currentMode = "DAY", toastTimer = null;
+const loaded = {};   // per-view lazy-load flags
 
 function toast(msg, isError) {
   const el = $("toast");
@@ -242,70 +395,110 @@ function toast(msg, isError) {
   el.style.borderColor = isError ? "var(--red)" : "var(--border)";
   el.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove("show"), 3500);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 3800);
 }
-
 async function api(path, opts) {
   const res = await fetch(path, opts);
   let data = null;
-  try { data = await res.json(); } catch (e) { /* non-JSON */ }
+  try { data = await res.json(); } catch (e) {}
   if (!res.ok) throw new Error((data && (data.error || data.message)) || ("HTTP " + res.status));
   return data;
 }
-
 function fmtUptime(s) {
   if (!s) return "—";
-  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
-  return (d ? d + "d " : "") + (h ? h + "h " : "") + m + "m";
+  const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60);
+  return (d ? d+"d " : "") + (h ? h+"h " : "") + m + "m";
 }
 function fmtBytes(b) {
   if (b == null) return "—";
-  const u = ["B", "KB", "MB", "GB"]; let i = 0;
-  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  const u = ["B","KB","MB","GB"]; let i = 0;
+  while (b >= 1024 && i < u.length-1) { b /= 1024; i++; }
   return b.toFixed(i ? 1 : 0) + " " + u[i];
 }
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-}
-function kv(rows) {
-  return rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join("");
-}
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function kv(rows) { return rows.map(([k,v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join(""); }
 
-// ---------- status polling ----------
+// ---------- navigation ----------
+const VIEWS = ["dashboard","preview","layout","sponsors","weather","audio","diagnostics","logs","settings"];
+function showView(name) {
+  if (!VIEWS.includes(name)) name = "dashboard";
+  VIEWS.forEach(v => $("view-"+v).classList.toggle("active", v === name));
+  document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.view === name));
+  document.body.classList.remove("nav-open");
+  if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
+  $("main") && ($("main").scrollTop = 0);
+  document.querySelector("main").scrollTop = 0;
+  lazyLoad(name);
+}
+function lazyLoad(name) {
+  if (loaded[name]) {
+    if (name === "layout") renderLayout();      // re-measure after being hidden
+    return;
+  }
+  loaded[name] = true;
+  if (name === "sponsors") loadAds();
+  else if (name === "weather") loadOverlays();
+  else if (name === "logs") loadLog();
+  else if (name === "settings") loadConfig();
+  else if (name === "layout") loadLayout();
+}
+document.querySelectorAll(".nav-item").forEach(b => b.addEventListener("click", () => showView(b.dataset.view)));
+$("menuBtn").addEventListener("click", () => document.body.classList.toggle("nav-open"));
+$("scrim").addEventListener("click", () => document.body.classList.remove("nav-open"));
+window.addEventListener("hashchange", () => showView(location.hash.slice(1)));
+
+// ---------- status ----------
 async function refreshStatus() {
   try {
     const s = await api("/api/status");
-    statusData = s;
-    renderStatus(s);
+    statusData = s; renderStatus(s);
   } catch (e) {
-    $("pillStream").textContent = "API ERROR";
-    $("pillStream").className = "pill err";
+    $("pillStream").textContent = "API ERROR"; $("pillStream").className = "pill err";
   }
 }
 
 function renderStatus(s) {
   const st = s.stream, cam = s.camera, aud = s.audio, wd = s.watchdog, sys = s.system, pv = s.preview;
 
-  // header pills
   const pillStream = $("pillStream");
   if (st.broadcasting) {
     pillStream.textContent = st.youtube_configured ? "BROADCASTING" : "ENCODING";
     pillStream.className = "pill live";
-  } else {
-    pillStream.textContent = "NOT RUNNING";
-    pillStream.className = "pill err";
-  }
+  } else { pillStream.textContent = "NOT RUNNING"; pillStream.className = "pill err"; }
   const pillMode = $("pillMode");
-  pillMode.textContent = st.mode === "fallback" ? "BRB SCREEN" : st.mode.toUpperCase();
+  pillMode.textContent = st.mode === "fallback" ? "BRB SCREEN" : String(st.mode).toUpperCase();
   pillMode.className = "pill " + (st.mode === "fallback" ? "warn" : "");
   const pillCam = $("pillCamera");
-  pillCam.textContent = "CAMERA " + (cam.rtsp_status === "reachable" ? "OK" :
-                        cam.rtsp_status === "unreachable" ? "DOWN" : "?");
-  pillCam.className = "pill " + (cam.rtsp_status === "reachable" ? "live" :
-                      cam.rtsp_status === "unreachable" ? "err" : "");
-  const pillAudio = $("pillAudio");
-  pillAudio.textContent = "AUDIO: " + aud.mode.toUpperCase();
-  pillAudio.className = "pill";
+  pillCam.textContent = "CAM " + (cam.rtsp_status === "reachable" ? "OK" : cam.rtsp_status === "unreachable" ? "DOWN" : "?");
+  pillCam.className = "pill " + (cam.rtsp_status === "reachable" ? "live" : cam.rtsp_status === "unreachable" ? "err" : "");
+  $("pillAudio").textContent = "AUDIO " + String(aud.mode).toUpperCase();
+
+  // Actionable banner when the encoder is down but the camera is fine
+  const zone = $("alertZone");
+  const hold = st.restart_hold_seconds || 0;
+  if (hold > 0) {
+    zone.innerHTML = `<div class="banner warn"><span class="bico">&#9203;</span><div>
+      <b>Restart backoff in progress — ${hold}s remaining.</b>
+      <p>The watchdog is pacing reconnects after repeated failures. If you have fixed the
+         underlying problem you do not have to wait it out.</p>
+      <button id="btnRetryNow" class="primary" style="margin-top:8px">&#9654; Retry Now</button>
+    </div></div>`;
+    $("btnRetryNow").addEventListener("click", async () => {
+      try { toast((await api("/api/stream/retry-now", { method: "POST" })).message); }
+      catch (e) { toast(e.message, true); }
+    });
+    document.querySelector('[data-view="diagnostics"]').classList.add("alert");
+  } else if (!st.broadcasting && st.youtube_configured) {
+    const camOk = cam.rtsp_status === "reachable";
+    zone.innerHTML = `<div class="banner"><span class="bico">&#9888;</span><div>
+      <b>The encoder is not running.</b>
+      <p>${camOk
+        ? 'The camera is reachable, so the failure is on the publishing side. Run <b>Diagnostics &rarr; Test Ingest Connection</b> to find out whether it is the network path or the stream key.'
+        : 'The camera is also unreachable — check the camera first.'}</p></div></div>`;
+    document.querySelector('[data-view="diagnostics"]').classList.add("alert");
+  } else {
+    zone.innerHTML = ""; document.querySelector('[data-view="diagnostics"]').classList.remove("alert");
+  }
 
   const p = st.progress || {};
   $("tblStream").innerHTML = kv([
@@ -318,34 +511,28 @@ function renderStatus(s) {
     ["Speed", p.speed ? (parseFloat(p.speed) >= 0.98 ? `<span class="ok">${esc(p.speed)}</span>` : `<span class="mid">${esc(p.speed)}</span>`) : "—"],
     ["Encoder CPU", st.cpu_percent != null ? st.cpu_percent + "%" : "—"],
   ]);
-
   $("tblCamera").innerHTML = kv([
     ["RTSP source", cam.rtsp_configured ? "configured" : '<span class="bad">not set</span>'],
-    ["Reachability", cam.rtsp_status === "reachable" ? '<span class="ok">reachable</span>' :
-                     cam.rtsp_status === "unreachable" ? '<span class="bad">unreachable</span>' : "unknown"],
+    ["Reachability", cam.rtsp_status === "reachable" ? '<span class="ok">reachable</span>'
+      : cam.rtsp_status === "unreachable" ? '<span class="bad">unreachable</span>' : "unknown"],
     ["Stream mode", st.mode === "fallback" ? '<span class="mid">BRB fallback</span>' : esc(st.mode)],
     ["Fallback screen", st.fallback_enabled ? "enabled" : "disabled"],
   ]);
-
   $("tblAudio").innerHTML = kv([
     ["Mode", "<b>" + esc(aud.mode) + "</b>"],
     ["Music files", aud.music_files + " MP3" + (aud.music_files === 1 ? "" : "s")],
   ]);
-  document.querySelectorAll("[data-audio]").forEach(b => {
-    b.classList.toggle("active", b.dataset.audio === aud.mode);
-  });
+  document.querySelectorAll("[data-audio]").forEach(b => b.classList.toggle("active", b.dataset.audio === aud.mode));
 
   const ws = wd.state || {};
   $("tblWatchdog").innerHTML = kv([
     ["Watchdog", wd.enabled ? '<span class="ok">enabled</span>' : "disabled"],
     ["Total restarts", ws.total_restarts != null ? ws.total_restarts : "—"],
     ["Backoff attempt", ws.attempt != null ? ws.attempt : "—"],
-    ["Last healthy", ws.last_healthy ? esc(String(ws.last_healthy).replace("T", " ").slice(0, 19)) : "—"],
-    ["Last restart", ws.last_restart ? esc(String(ws.last_restart).replace("T", " ").slice(0, 19)) : "—"],
+    ["Last healthy", ws.last_healthy ? esc(String(ws.last_healthy).replace("T"," ").slice(0,19)) : "—"],
+    ["Last restart", ws.last_restart ? esc(String(ws.last_restart).replace("T"," ").slice(0,19)) : "—"],
   ]);
-
-  const memUsed = (sys.mem_total_bytes && sys.mem_available_bytes != null)
-    ? sys.mem_total_bytes - sys.mem_available_bytes : null;
+  const memUsed = (sys.mem_total_bytes && sys.mem_available_bytes != null) ? sys.mem_total_bytes - sys.mem_available_bytes : null;
   $("tblSystem").innerHTML = kv([
     ["CPU", sys.cpu_percent != null ? sys.cpu_percent + "% of " + sys.cpu_count + " cores" : "—"],
     ["Load avg", sys.load ? sys.load.join(" / ") : "—"],
@@ -353,176 +540,277 @@ function renderStatus(s) {
     ["Preview pipeline", pv.running ? '<span class="mid">running (' + (pv.cpu_percent != null ? pv.cpu_percent + "% CPU" : "…") + ")</span>" : '<span class="ok">off — 0% CPU</span>'],
   ]);
 
-  // preview panel
   $("idleTimeoutLabel").textContent = pv.idle_timeout_seconds;
   renderPreview(pv);
+  syncLayoutBackdrop(pv.running && pv.has_frame);
 }
 
+// ---------- preview ----------
 function renderPreview(pv) {
   const img = $("previewImg"), off = $("previewOffMsg");
   $("btnPreviewStart").disabled = pv.running;
   $("btnPreviewStop").disabled = !pv.running;
-
   if (pv.running && !previewActive && pv.has_frame) {
-    previewActive = true;
-    img.src = "/api/preview/stream?t=" + Date.now();
-    img.style.display = "block";
-    off.style.display = "none";
+    previewActive = true; img.src = "/api/preview/stream?t=" + Date.now();
+    img.style.display = "block"; off.style.display = "none";
   } else if (!pv.running && previewActive) {
-    previewActive = false;
-    img.src = "";
-    img.style.display = "none";
-    off.style.display = "block";
+    previewActive = false; img.src = ""; img.style.display = "none"; off.style.display = "block";
   }
-
   const stats = [];
   if (pv.running) {
-    stats.push(`source: <b>${esc(pv.source || "—")}</b>`);
-    stats.push(`fps: <b>${pv.fps}</b>`);
-    stats.push(`width: <b>${pv.width}px</b>`);
-    stats.push(`uptime: <b>${fmtUptime(pv.uptime_seconds)}</b>`);
+    stats.push(`source: <b>${esc(pv.source || "—")}</b>`, `fps: <b>${pv.fps}</b>`,
+      `width: <b>${pv.width}px</b>`, `uptime: <b>${fmtUptime(pv.uptime_seconds)}</b>`);
     if (pv.cpu_percent != null) stats.push(`cpu: <b>${pv.cpu_percent}%</b>`);
     stats.push(`viewers: <b>${pv.viewers}</b>`);
-    if (pv.low_cpu_mode) stats.push(`<span class="mid">low-CPU mode (keyframes only)</span>`);
+    if (pv.low_cpu_mode) stats.push(`<span class="mid">low-CPU mode</span>`);
     if (!pv.has_frame) stats.push(`<span class="mid">waiting for first frame…</span>`);
-  } else if (pv.last_error) {
-    stats.push(`<span class="bad">last error: ${esc(pv.last_error)}</span>`);
-  }
+  } else if (pv.last_error) stats.push(`<span class="bad">last error: ${esc(pv.last_error)}</span>`);
   $("previewStats").innerHTML = stats.join(" &middot; ");
 }
-
 $("previewImg").addEventListener("error", () => {
-  // stream dropped; the next status poll will restart it if still running
-  previewActive = false;
-  $("previewImg").style.display = "none";
-  $("previewOffMsg").style.display = "block";
+  previewActive = false; $("previewImg").style.display = "none"; $("previewOffMsg").style.display = "block";
 });
-
 $("btnPreviewStart").addEventListener("click", async () => {
-  const source = $("previewSource").value;
   $("btnPreviewStart").disabled = true;
-  try {
-    const r = await api("/api/preview/start?source=" + encodeURIComponent(source), { method: "POST" });
-    toast(r.message);
-  } catch (e) { toast("Preview failed: " + e.message, true); }
+  try { toast((await api("/api/preview/start?source=" + encodeURIComponent($("previewSource").value), { method: "POST" })).message); }
+  catch (e) { toast("Preview failed: " + e.message, true); }
   refreshStatus();
 });
-
 $("btnPreviewStop").addEventListener("click", async () => {
-  try {
-    await api("/api/preview/stop", { method: "POST" });
-    toast("Preview stopped — CPU released");
-  } catch (e) { toast(e.message, true); }
+  try { await api("/api/preview/stop", { method: "POST" }); toast("Preview stopped — CPU released"); }
+  catch (e) { toast(e.message, true); }
   refreshStatus();
 });
 
 // ---------- controls ----------
-document.querySelectorAll("[data-audio]").forEach(btn => {
-  btn.addEventListener("click", async () => {
-    try {
-      const r = await api("/api/audio/" + btn.dataset.audio, { method: "POST" });
-      toast("Audio: " + r.audio + " — " + r.message);
-    } catch (e) { toast(e.message, true); }
-    setTimeout(refreshStatus, 500);
-  });
-});
-
+document.querySelectorAll("[data-audio]").forEach(btn => btn.addEventListener("click", async () => {
+  try { const r = await api("/api/audio/" + btn.dataset.audio, { method: "POST" }); toast("Audio: " + r.audio + " — " + r.message); }
+  catch (e) { toast(e.message, true); }
+  setTimeout(refreshStatus, 500);
+}));
 $("btnRestart").addEventListener("click", async () => {
-  if (!confirm("Restart the broadcast FFmpeg?\nThe supervisor loop restarts it within a few seconds; YouTube viewers may see a brief hiccup.")) return;
-  try {
-    const r = await api("/api/stream/restart", { method: "POST" });
-    toast(r.message);
-  } catch (e) { toast(e.message, true); }
+  if (!confirm("Restart the broadcast encoder?\nViewers may see a brief interruption.")) return;
+  try { toast((await api("/api/stream/restart", { method: "POST" })).message); }
+  catch (e) { toast(e.message, true); }
 });
-
 $("btnWeatherRefresh").addEventListener("click", async () => {
-  $("btnWeatherRefresh").disabled = true;
-  toast("Refreshing weather overlay…");
-  try {
-    const r = await api("/api/weather/refresh", { method: "POST" });
-    toast(r.message);
-    loadOverlays();
-  } catch (e) { toast(e.message, true); }
+  $("btnWeatherRefresh").disabled = true; toast("Refreshing weather overlay…");
+  try { toast((await api("/api/weather/refresh", { method: "POST" })).message); loadOverlays(); }
+  catch (e) { toast(e.message, true); }
   $("btnWeatherRefresh").disabled = false;
 });
 
-// ---------- overlays ----------
-const OVERLAYS = [
-  ["weather", "Weather + Alerts (bottom-right)"],
-  ["tl", "Sponsor — Top-Left"],
-  ["tr", "Sponsor — Top-Right"],
-  ["fallback", "BRB Fallback Screen"],
-];
+// ---------- diagnostics ----------
+$("btnIngestCheck").addEventListener("click", async () => {
+  const el = $("ingestResult");
+  $("btnIngestCheck").disabled = true;
+  el.innerHTML = "Probing DNS &rarr; TCP &rarr; TLS …";
+  try {
+    const r = await api("/api/ingest/check", { method: "POST" });
+    const mark = v => v === true ? '<span class="ok">ok</span>' : v === false ? '<span class="bad">FAILED</span>' : '<span class="muted">—</span>';
+    let html = `<table class="kv">` + kv([
+      ["Endpoint", esc(r.url_scheme + "://" + r.host + ":" + r.port)],
+      ["DNS", mark(r.dns)], ["TCP connect", mark(r.tcp)],
+      ["TLS handshake", r.url_scheme === "rtmps" ? mark(r.tls) : '<span class="muted">n/a (plain rtmp)</span>'],
+    ]) + `</table>`;
+    if (r.tls_version) html += `<p class="muted" style="margin-top:8px">Negotiated ${esc(r.tls_version)}</p>`;
+    if (r.error) html += `<p class="bad" style="margin-top:8px">${esc(r.error)}</p>`;
+    if (r.hint) html += `<p style="margin-top:8px">${esc(r.hint)}</p>`;
+    if (r.verdict === "ok") html += `<p class="ok" style="margin-top:8px">The publishing path is healthy. If the stream still will not start, the stream key is being rejected — reset it in YouTube Studio and make sure no other encoder is using it.</p>`;
+    el.innerHTML = html;
+  } catch (e) { el.innerHTML = `<span class="bad">Probe failed: ${esc(e.message)}</span>`; }
+  $("btnIngestCheck").disabled = false;
+});
+
+// ---------- overlays (images) ----------
+const OVERLAYS = [["weather","Weather + Alerts"],["tl","Sponsor — Top-Left"],["tr","Sponsor — Top-Right"],["fallback","BRB Fallback Screen"]];
 function loadOverlays() {
-  $("overlayGrid").innerHTML = OVERLAYS.map(([key, label]) =>
-    `<div class="overlay-item">
-       <img src="/api/overlay/${key}?t=${Date.now()}" onerror="this.parentElement.style.display='none'">
-       <div class="cap">${esc(label)}</div>
-     </div>`).join("");
+  $("overlayGrid").innerHTML = OVERLAYS.map(([k,l]) =>
+    `<div class="overlay-item"><img src="/api/overlay/${k}?t=${Date.now()}" onerror="this.parentElement.style.display='none'">
+     <div class="cap">${esc(l)}</div></div>`).join("");
 }
 $("btnOverlayReload").addEventListener("click", loadOverlays);
 
-// ---------- ads ----------
-async function loadAds() {
+// ---------- overlay layout editor ----------
+const OVERLAY_SRC = { tl: "/api/overlay/tl", tr: "/api/overlay/tr", weather: "/api/overlay/weather" };
+let layout = null, canvasW = 2560, canvasH = 1440, layoutLabels = {}, selectedSlot = null;
+
+async function loadLayout() {
   try {
-    const r = await api("/api/ads");
-    renderAds(r.ads);
-  } catch (e) { toast("Failed to load ads: " + e.message, true); }
+    const r = await api("/api/layout");
+    layout = r.overlays; layoutLabels = r.labels || {};
+    canvasW = r.canvas.width; canvasH = r.canvas.height;
+    renderLayout();
+  } catch (e) { toast("Failed to load layout: " + e.message, true); }
+}
+function renderLayout() {
+  if (!layout) return;
+  const canvas = $("layoutCanvas");
+  canvas.querySelectorAll(".lbox").forEach(n => n.remove());
+  for (const slot of Object.keys(layout)) {
+    const b = layout[slot];
+    const box = document.createElement("div");
+    box.className = "lbox" + (b.enabled ? "" : " disabled") + (slot === selectedSlot ? " sel" : "");
+    box.style.left = (b.x/canvasW*100)+"%"; box.style.top = (b.y/canvasH*100)+"%";
+    box.style.width = (b.w/canvasW*100)+"%"; box.style.height = (b.h/canvasH*100)+"%";
+    box.dataset.slot = slot;
+    box.innerHTML = `<span class="tag">${esc(layoutLabels[slot] || slot)}</span>` +
+      `<img src="${OVERLAY_SRC[slot]}?t=${Date.now()}" onerror="this.style.display='none'"><span class="grip"></span>`;
+    canvas.appendChild(box);
+  }
+  renderLayoutRows();
+}
+function renderLayoutRows() {
+  $("layoutRows").innerHTML = Object.keys(layout).map(slot => {
+    const b = layout[slot];
+    return `<div class="layout-row" data-slot="${slot}">
+      <span class="nm">${esc(layoutLabels[slot] || slot)}</span>
+      <label>X <input type="number" data-f="x" value="${b.x}"></label>
+      <label>Y <input type="number" data-f="y" value="${b.y}"></label>
+      <label>W <input type="number" data-f="w" value="${b.w}"></label>
+      <label>H <input type="number" data-f="h" value="${b.h}"></label>
+      <label><input type="checkbox" data-f="enabled" ${b.enabled ? "checked" : ""}> visible</label>
+    </div>`;
+  }).join("");
+  $("layoutRows").querySelectorAll("input").forEach(inp => inp.addEventListener("change", () => {
+    const slot = inp.closest(".layout-row").dataset.slot, f = inp.dataset.f;
+    if (f === "enabled") layout[slot].enabled = inp.checked;
+    else { const v = parseInt(inp.value, 10); if (!Number.isNaN(v)) layout[slot][f] = v; }
+    clampSlot(slot); selectedSlot = slot; renderLayout();
+  }));
+}
+function clampSlot(slot) {
+  const b = layout[slot];
+  b.w = Math.max(32, Math.min(canvasW, Math.round(b.w)));
+  b.h = Math.max(32, Math.min(canvasH, Math.round(b.h)));
+  b.x = Math.max(0, Math.min(canvasW - b.w, Math.round(b.x)));
+  b.y = Math.max(0, Math.min(canvasH - b.h, Math.round(b.y)));
+}
+(function initLayoutDrag() {
+  const canvas = $("layoutCanvas");
+  let mode = null, slot = null, startX = 0, startY = 0, orig = null;
+  canvas.addEventListener("pointerdown", (ev) => {
+    const box = ev.target.closest(".lbox");
+    if (!box || !layout) return;
+    slot = box.dataset.slot; selectedSlot = slot;
+    mode = ev.target.classList.contains("grip") ? "resize" : "move";
+    const rect = canvas.getBoundingClientRect();
+    startX = (ev.clientX-rect.left)/rect.width*canvasW;
+    startY = (ev.clientY-rect.top)/rect.height*canvasH;
+    orig = { ...layout[slot] };
+    canvas.setPointerCapture(ev.pointerId); ev.preventDefault(); renderLayout();
+  });
+  canvas.addEventListener("pointermove", (ev) => {
+    if (!mode) return;
+    const rect = canvas.getBoundingClientRect();
+    const dx = (ev.clientX-rect.left)/rect.width*canvasW - startX;
+    const dy = (ev.clientY-rect.top)/rect.height*canvasH - startY;
+    const b = layout[slot];
+    if (mode === "move") { b.x = orig.x + dx; b.y = orig.y + dy; }
+    else {
+      const ratio = orig.h / orig.w;
+      b.w = orig.w + dx;
+      b.h = ev.shiftKey ? orig.h + dy : (orig.w + dx) * ratio;
+    }
+    clampSlot(slot);
+    const el = canvas.querySelector(`.lbox[data-slot="${slot}"]`);
+    if (el) {
+      el.style.left = (b.x/canvasW*100)+"%"; el.style.top = (b.y/canvasH*100)+"%";
+      el.style.width = (b.w/canvasW*100)+"%"; el.style.height = (b.h/canvasH*100)+"%";
+    }
+  });
+  const endDrag = (ev) => {
+    if (!mode) return;
+    mode = null;
+    try { canvas.releasePointerCapture(ev.pointerId); } catch (e) {}
+    renderLayoutRows();
+  };
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", endDrag);
+})();
+async function saveLayout(apply) {
+  try {
+    const r = await api("/api/layout" + (apply ? "?apply=true" : ""), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ overlays: layout }) });
+    layout = r.overlays; renderLayout(); toast(r.message);
+    setTimeout(refreshStatus, 500);
+  } catch (e) { toast("Save failed: " + e.message, true); }
+}
+$("btnLayoutSave").addEventListener("click", () => saveLayout(false));
+$("btnLayoutApply").addEventListener("click", () => {
+  if (!confirm("Save the layout and restart the broadcast encoder to apply it?\nViewers will see a few seconds of interruption.")) return;
+  saveLayout(true);
+});
+$("btnLayoutReset").addEventListener("click", async () => {
+  if (!confirm("Reset all overlay positions to their defaults?")) return;
+  try { const r = await api("/api/layout/reset", { method: "POST" }); layout = r.overlays; renderLayout(); toast(r.message); }
+  catch (e) { toast(e.message, true); }
+});
+let layoutBgTimer = null;
+function syncLayoutBackdrop(previewRunning) {
+  const bg = $("layoutBg"), msg = $("layoutBgMsg"), hint = $("layoutHint");
+  if (previewRunning && !layoutBgTimer) {
+    const tick = () => {
+      if (!$("view-layout").classList.contains("active")) return;  // don't poll a hidden view
+      const probe = new Image();
+      probe.onload = () => { bg.src = probe.src; bg.style.display = "block"; msg.style.display = "none"; };
+      probe.src = "/api/preview/snapshot?t=" + Date.now();
+    };
+    tick(); layoutBgTimer = setInterval(tick, 1000);
+    hint.textContent = "Live preview backdrop active";
+  } else if (!previewRunning && layoutBgTimer) {
+    clearInterval(layoutBgTimer); layoutBgTimer = null;
+    bg.src = ""; bg.style.display = "none"; msg.style.display = "block";
+    hint.textContent = "Start the preview to position against the live picture";
+  }
+}
+
+// ---------- sponsors ----------
+async function loadAds() {
+  try { renderAds((await api("/api/ads")).ads); }
+  catch (e) { toast("Failed to load ads: " + e.message, true); }
 }
 function renderAds(ads) {
   const files = ((ads[currentSlot] || {})[currentMode]) || [];
-  $("uploadTargetLabel").textContent =
-    (currentSlot === "topleft" ? "TL" : "TR") + " · " + (currentMode === "DAY" ? "Day" : "Night");
+  $("uploadTargetLabel").textContent = (currentSlot === "topleft" ? "TL" : "TR") + " · " + (currentMode === "DAY" ? "Day" : "Night");
   if (!files.length) {
     $("adGrid").innerHTML = '<div class="muted">No logos in this slot yet — a transparent placeholder is shown on stream.</div>';
     return;
   }
   $("adGrid").innerHTML = files.map(f =>
-    `<div class="ad-item">
-       <img src="/api/ads/image?slot=${currentSlot}&mode=${currentMode}&name=${encodeURIComponent(f.name)}">
-       <div class="name">${esc(f.name)}<br>${fmtBytes(f.bytes)}</div>
-       <button class="danger" data-del="${esc(f.name)}">Delete</button>
-     </div>`).join("");
-  document.querySelectorAll("[data-del]").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      if (!confirm("Delete " + btn.dataset.del + "?")) return;
-      try {
-        const r = await api("/api/ads/delete", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slot: currentSlot, mode: currentMode, name: btn.dataset.del }),
-        });
-        toast(r.message); renderAds(r.ads);
-      } catch (e) { toast(e.message, true); }
-    });
-  });
+    `<div class="ad-item"><img src="/api/ads/image?slot=${currentSlot}&mode=${currentMode}&name=${encodeURIComponent(f.name)}">
+     <div class="name">${esc(f.name)}<br>${fmtBytes(f.bytes)}</div>
+     <button class="danger" data-del="${esc(f.name)}">Delete</button></div>`).join("");
+  document.querySelectorAll("[data-del]").forEach(btn => btn.addEventListener("click", async () => {
+    if (!confirm("Delete " + btn.dataset.del + "?")) return;
+    try {
+      const r = await api("/api/ads/delete", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slot: currentSlot, mode: currentMode, name: btn.dataset.del }) });
+      toast(r.message); renderAds(r.ads);
+    } catch (e) { toast(e.message, true); }
+  }));
 }
-document.querySelectorAll(".ad-tab").forEach(tab => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll(".ad-tab").forEach(t => t.classList.remove("active"));
-    tab.classList.add("active");
-    currentSlot = tab.dataset.slot; currentMode = tab.dataset.mode;
-    loadAds();
-  });
-});
+document.querySelectorAll(".ad-tab").forEach(tab => tab.addEventListener("click", () => {
+  document.querySelectorAll(".ad-tab").forEach(t => t.classList.remove("active"));
+  tab.classList.add("active");
+  currentSlot = tab.dataset.slot; currentMode = tab.dataset.mode; loadAds();
+}));
 $("btnAdUpload").addEventListener("click", async () => {
   const input = $("adFile");
   if (!input.files.length) { toast("Choose a file first", true); return; }
   const fd = new FormData();
-  fd.append("slot", currentSlot);
-  fd.append("mode", currentMode);
-  fd.append("file", input.files[0]);
+  fd.append("slot", currentSlot); fd.append("mode", currentMode); fd.append("file", input.files[0]);
   $("btnAdUpload").disabled = true;
-  try {
-    const r = await api("/api/ads/upload", { method: "POST", body: fd });
-    toast(r.message); renderAds(r.ads); input.value = "";
-  } catch (e) { toast("Upload failed: " + e.message, true); }
+  try { const r = await api("/api/ads/upload", { method: "POST", body: fd }); toast(r.message); renderAds(r.ads); input.value = ""; }
+  catch (e) { toast("Upload failed: " + e.message, true); }
   $("btnAdUpload").disabled = false;
 });
 
 // ---------- logs ----------
 async function loadLog() {
   try {
-    const r = await api("/api/logs?name=" + $("logName").value + "&lines=300");
+    const r = await api("/api/logs?name=" + $("logName").value + "&lines=400");
     const view = $("logView");
     view.textContent = r.lines.length ? r.lines.join("\n") : (r.note || "(empty)");
     view.scrollTop = view.scrollHeight;
@@ -530,31 +818,23 @@ async function loadLog() {
 }
 $("btnLogRefresh").addEventListener("click", loadLog);
 $("logName").addEventListener("change", loadLog);
-setInterval(() => { if ($("logAuto").checked) loadLog(); }, 5000);
+setInterval(() => { if ($("logAuto").checked && $("view-logs").classList.contains("active")) loadLog(); }, 5000);
 
-// ---------- config ----------
+// ---------- settings ----------
 async function loadConfig() {
   try {
-    const c = await api("/api/config");
-    const rows = [];
-    const flat = (obj, prefix) => {
-      for (const [k, v] of Object.entries(obj)) {
-        if (v && typeof v === "object") flat(v, k + ".");
-        else rows.push([(prefix || "") + k, esc(String(v))]);
-      }
-    };
-    flat(c, "");
+    const c = await api("/api/config"); const rows = [];
+    (function flat(o, p) { for (const [k,v] of Object.entries(o)) {
+      if (v && typeof v === "object") flat(v, k + "."); else rows.push([(p||"")+k, esc(String(v))]); } })(c, "");
     $("tblConfig").innerHTML = kv(rows);
-  } catch (e) { /* ignore */ }
+  } catch (e) {}
 }
 
 // ---------- boot ----------
+showView(location.hash.slice(1) || "dashboard");
 refreshStatus();
-loadOverlays();
-loadAds();
-loadConfig();
 setInterval(refreshStatus, 3000);
-setInterval(loadOverlays, 60000);
+setInterval(() => { if ($("view-weather").classList.contains("active")) loadOverlays(); }, 60000);
 </script>
 </body>
 </html>

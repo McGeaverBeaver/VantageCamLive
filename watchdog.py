@@ -375,13 +375,24 @@ class WatchdogState:
         self.load()
 
     def load(self):
-        """Load state from disk"""
+        """Load state from disk.
+
+        The backoff counter is deliberately NOT carried across a restart of the
+        container: a persisted attempt count from an old incident (this has
+        reached the hundreds in the wild) would put a freshly-booted container
+        straight at the 15-minute maximum delay, so an operator who has just
+        fixed the problem waits 15 minutes to find out. total_restarts is kept
+        because it is a lifetime statistic, not a control input.
+        """
         try:
             if os.path.exists(WATCHDOG_STATE_FILE):
                 with open(WATCHDOG_STATE_FILE, 'r') as f:
                     data = json.load(f)
-                    self.attempt = data.get('attempt', 0)
                     self.total_restarts = data.get('total_restarts', 0)
+                    prior_attempt = data.get('attempt', 0)
+                    if prior_attempt:
+                        logger.info(f"Resetting backoff counter (was {prior_attempt} from a previous run)")
+                    self.attempt = 0
                     if data.get('last_healthy'):
                         self.last_healthy = datetime.fromisoformat(data['last_healthy'])
                     if data.get('last_restart'):
@@ -897,6 +908,14 @@ def restart_stream():
                 return False
         else:
             logger.info("RTSP source is healthy, proceeding with restart")
+
+    # If FFmpeg is not running at all, start.sh is already in its own retry
+    # loop. Killing nothing and then imposing a restart hold would only freeze
+    # a supervisor that is actively trying to recover.
+    if get_ffmpeg_pid() is None:
+        logger.info("FFmpeg is not running - start.sh is already retrying startup. "
+                    "Skipping watchdog restart (no hold imposed).")
+        return False
 
     state.increment_attempt()
     logger.info(f"Attempt #{state.attempt} - Total restarts: {state.total_restarts}")

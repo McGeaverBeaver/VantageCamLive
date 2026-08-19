@@ -115,16 +115,24 @@ trim_ffmpeg_log() {
 # restarted FFmpeg instantly, making the backoff a no-op).
 RESTART_HOLD_FILE="$WORKDIR/restart_hold"
 honor_restart_hold() {
-    local hold_until now
+    local hold_until now wait_s
     hold_until=$(cat "$RESTART_HOLD_FILE" 2>/dev/null || echo 0)
     case "$hold_until" in (*[!0-9]*|"") hold_until=0;; esac
     now=$(date +%s)
-    if [ "$hold_until" -gt "$now" ]; then
-        local wait_s=$((hold_until - now))
-        if [ "$wait_s" -gt 900 ]; then wait_s=900; fi
-        log "[Watchdog] Honoring restart hold: waiting ${wait_s}s before respawning FFmpeg..."
-        sleep "$wait_s"
-    fi
+    [ "$hold_until" -gt "$now" ] || { rm -f "$RESTART_HOLD_FILE"; return; }
+
+    wait_s=$((hold_until - now))
+    [ "$wait_s" -gt 900 ] && wait_s=900
+    log "[Watchdog] Honoring restart hold: waiting ${wait_s}s before respawning FFmpeg."
+    log "[Watchdog] Cancel it any time with: rm -f $RESTART_HOLD_FILE   (or 'Retry Now' in the WebUI)"
+    # Sleep in short slices and re-check, so deleting the file cancels the wait
+    # instead of leaving the operator staring at a 15-minute blackout.
+    while [ -f "$RESTART_HOLD_FILE" ]; do
+        now=$(date +%s)
+        [ "$now" -ge "$hold_until" ] && break
+        sleep 2
+    done
+    if [ ! -f "$RESTART_HOLD_FILE" ]; then log "[Watchdog] Restart hold cancelled - respawning now."; fi
     rm -f "$RESTART_HOLD_FILE"
 }
 rm -f "$RESTART_HOLD_FILE"
@@ -137,6 +145,46 @@ rm -f "$WORKDIR/youtube_restreamer.pid"
 # ==============================================================================
 check_rtsp_basic() {
     if timeout 2 bash -c "echo >/dev/tcp/$RTSP_HOST/$RTSP_PORT" 2>/dev/null; then return 0; else return 1; fi
+}
+
+# --- YouTube ingest reachability -------------------------------------------
+# Parse the configured ingest URL once so failures can say *which* leg broke:
+# an unreachable ingest host looks nothing like a dead camera, but both used to
+# surface as the same anonymous "Startup attempt failed" line.
+parse_youtube_endpoint() {
+    local url="${YOUTUBE_URL:-}"
+    local scheme="${url%%://*}"
+    local rest="${url#*://}"
+    rest="${rest%%/*}"
+    YT_HOST="${rest%%:*}"
+    if [[ "$rest" == *:* ]]; then YT_PORT="${rest##*:}"; else
+        case "$scheme" in
+            rtmps) YT_PORT=443 ;;
+            rtmp)  YT_PORT=1935 ;;
+            *)     YT_PORT=1935 ;;
+        esac
+    fi
+    YT_SCHEME="$scheme"
+    case "$YT_PORT" in (*[!0-9]*|"") YT_PORT=1935;; esac
+}
+parse_youtube_endpoint
+
+check_youtube_ingest() {
+    [ -n "$YT_HOST" ] || return 0
+    timeout 5 bash -c "echo >/dev/tcp/$YT_HOST/$YT_PORT" 2>/dev/null
+}
+
+# Redact the stream key from anything FFmpeg prints. FFmpeg echoes the full
+# output URL (key included) in its error messages, which otherwise lands in
+# `docker logs` and /config/ffmpeg.log in plaintext.
+# Pure bash on purpose: Alpine's sed is busybox (no -u), so a sed filter would
+# block-buffer the log. The quoted pattern makes the match literal.
+scrub_key() {
+    if [ -z "$YOUTUBE_KEY" ]; then cat; return; fi
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do
+        printf '%s\n' "${line//"$YOUTUBE_KEY"/<STREAM_KEY>}"
+    done
 }
 check_rtsp_robust() {
     if ! check_rtsp_basic; then return 1; fi
@@ -276,6 +324,30 @@ timeout 180 python3 /tmp/download_icons.py; rm /tmp/download_icons.py
 
 mkdir -p "$ADS_BASE/topleft/DAY" "$ADS_BASE/topleft/NIGHT" "$ADS_BASE/topright/DAY" "$ADS_BASE/topright/NIGHT"
 
+# ==============================================================================
+#  OVERLAY LAYOUT (positions editable in the Admin WebUI)
+# ==============================================================================
+OVERLAY_LAYOUT_SH="$WORKDIR/overlay_layout.sh"
+load_overlay_layout() {
+    # Regenerates the shell fragment from overlay_layout.json (creating defaults
+    # on first run), then sources it. The fragment holds only integer
+    # assignments, so sourcing it is safe.
+    python3 /overlay_layout.py sh > /dev/null 2>&1
+    if [ -f "$OVERLAY_LAYOUT_SH" ]; then
+        # shellcheck disable=SC1090
+        . "$OVERLAY_LAYOUT_SH"
+    fi
+    # Fall back to the classic corner positions if anything went wrong
+    : "${LAYOUT_TL_X:=20}"      "${LAYOUT_TL_Y:=20}"
+    : "${LAYOUT_TL_W:=$SCALE_ADS_TL}"  "${LAYOUT_TL_H:=$SCALE_ADS_TL}"  "${LAYOUT_TL_ENABLED:=1}"
+    : "${LAYOUT_TR_X:=$((2560 - SCALE_ADS_TR - 20))}" "${LAYOUT_TR_Y:=20}"
+    : "${LAYOUT_TR_W:=$SCALE_ADS_TR}"  "${LAYOUT_TR_H:=$SCALE_ADS_TR}"  "${LAYOUT_TR_ENABLED:=1}"
+    : "${LAYOUT_WEATHER_X:=1640}" "${LAYOUT_WEATHER_Y:=920}"
+    : "${LAYOUT_WEATHER_W:=900}"  "${LAYOUT_WEATHER_H:=500}" "${LAYOUT_WEATHER_ENABLED:=1}"
+}
+load_overlay_layout
+log "Overlay layout: TL ${LAYOUT_TL_W}x${LAYOUT_TL_H}@${LAYOUT_TL_X},${LAYOUT_TL_Y} | TR ${LAYOUT_TR_W}x${LAYOUT_TR_H}@${LAYOUT_TR_X},${LAYOUT_TR_Y} | Weather ${LAYOUT_WEATHER_W}x${LAYOUT_WEATHER_H}@${LAYOUT_WEATHER_X},${LAYOUT_WEATHER_Y}"
+
 log "--- Configuring Stream Output ---"
 if [ "$DIRECT_YOUTUBE_MODE" = "false" ]; then
     log "MediaMTX mode enabled"
@@ -342,17 +414,22 @@ get_mode() { local hr=$(date +%-H); if [ "$hr" -ge "$DAY_START_HOUR" ] && [ "$hr
 (
     shopt -s nocaseglob nullglob
     while true; do
+        # Re-read the layout each pass so logos are re-rendered at the box size
+        # the operator picked in the WebUI (keeps them crisp after a resize).
+        [ -f "$OVERLAY_LAYOUT_SH" ] && . "$OVERLAY_LAYOUT_SH"
+        TL_W="${LAYOUT_TL_W:-$SCALE_ADS_TL}"; TL_H="${LAYOUT_TL_H:-$SCALE_ADS_TL}"
         MODE=$(get_mode); TARGET_DIR="$ADS_BASE/topleft/$MODE"
         FILES=("$TARGET_DIR"/*.png "$TARGET_DIR"/*.jpg "$TARGET_DIR"/*.jpeg "$TARGET_DIR"/*.webp)
         if [ ${#FILES[@]} -eq 0 ]; then
             # Atomic swap: never rewrite the live overlay in place while ffmpeg reads it
-            if python3 /weather.py blank "$AD_TEMP_TL" "$SCALE_ADS_TL" "$SCALE_ADS_TL"; then mv -f "$AD_TEMP_TL" "$AD_FINAL_TL"; fi
+            if python3 /weather.py blank "$AD_TEMP_TL" "$TL_W" "$TL_H"; then mv -f "$AD_TEMP_TL" "$AD_FINAL_TL"; fi
             LAST_AD_HASH_TL=""; sleep 60; else
             for f in "${FILES[@]}"; do
                 if [ "$(get_mode)" != "$MODE" ]; then break; fi
-                CURRENT_HASH=$(md5sum "$f" 2>/dev/null | cut -d' ' -f1)
+                # Size is part of the cache key so a resize forces a re-render
+                CURRENT_HASH=$(md5sum "$f" 2>/dev/null | cut -d' ' -f1)"-${TL_W}x${TL_H}"
                 if [ "$CURRENT_HASH" != "$LAST_AD_HASH_TL" ] || [ ! -f "$AD_FINAL_TL" ]; then
-                    if python3 /weather.py ad "$AD_TEMP_TL" "$f" "$SCALE_ADS_TL" "$SCALE_ADS_TL"; then mv -f "$AD_TEMP_TL" "$AD_FINAL_TL"; LAST_AD_HASH_TL="$CURRENT_HASH"; fi
+                    if python3 /weather.py ad "$AD_TEMP_TL" "$f" "$TL_W" "$TL_H"; then mv -f "$AD_TEMP_TL" "$AD_FINAL_TL"; LAST_AD_HASH_TL="$CURRENT_HASH"; fi
                 fi
                 sleep "$AD_ROTATE_TIMER_TL"
             done
@@ -364,18 +441,20 @@ get_mode() { local hr=$(date +%-H); if [ "$hr" -ge "$DAY_START_HOUR" ] && [ "$hr
 (
     shopt -s nocaseglob nullglob; TR_INDEX=0
     while true; do
+        [ -f "$OVERLAY_LAYOUT_SH" ] && . "$OVERLAY_LAYOUT_SH"
+        TR_W="${LAYOUT_TR_W:-$SCALE_ADS_TR}"; TR_H="${LAYOUT_TR_H:-$SCALE_ADS_TR}"
         MODE=$(get_mode); TARGET_DIR="$ADS_BASE/topright/$MODE"
         FILES=("$TARGET_DIR"/*.png "$TARGET_DIR"/*.jpg "$TARGET_DIR"/*.jpeg "$TARGET_DIR"/*.webp)
         if [ ${#FILES[@]} -eq 0 ]; then
-            if python3 /weather.py blank "$AD_TEMP_TR" "$SCALE_ADS_TR" "$SCALE_ADS_TR"; then mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"; fi
+            if python3 /weather.py blank "$AD_TEMP_TR" "$TR_W" "$TR_H"; then mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"; fi
             LAST_AD_HASH_TR=""; sleep 60; else
             if [ $TR_INDEX -ge ${#FILES[@]} ]; then TR_INDEX=0; fi
-            CURRENT_HASH=$(md5sum "${FILES[$TR_INDEX]}" 2>/dev/null | cut -d' ' -f1)
+            CURRENT_HASH=$(md5sum "${FILES[$TR_INDEX]}" 2>/dev/null | cut -d' ' -f1)"-${TR_W}x${TR_H}"
             if [ "$CURRENT_HASH" != "$LAST_AD_HASH_TR" ] || [ ! -f "$AD_FINAL_TR" ]; then
-                if python3 /weather.py ad "$AD_TEMP_TR" "${FILES[$TR_INDEX]}" "$SCALE_ADS_TR" "$SCALE_ADS_TR"; then mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"; LAST_AD_HASH_TR="$CURRENT_HASH"; fi
+                if python3 /weather.py ad "$AD_TEMP_TR" "${FILES[$TR_INDEX]}" "$TR_W" "$TR_H"; then mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"; LAST_AD_HASH_TR="$CURRENT_HASH"; fi
             fi
             sleep "$TR_SHOW_SECONDS"
-            python3 /weather.py blank "$AD_TEMP_TR" "$SCALE_ADS_TR" "$SCALE_ADS_TR"; mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"; LAST_AD_HASH_TR=""; sleep "$TR_HIDE_SECONDS"; TR_INDEX=$((TR_INDEX + 1))
+            python3 /weather.py blank "$AD_TEMP_TR" "$TR_W" "$TR_H"; mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"; LAST_AD_HASH_TR=""; sleep "$TR_HIDE_SECONDS"; TR_INDEX=$((TR_INDEX + 1))
         fi
     done
 ) &
@@ -415,6 +494,15 @@ if [ "$WATCHDOG_ENABLED" = "true" ] && [ -n "$YOUTUBE_KEY" ]; then log "--- Star
 # ==============================================================================
 log "--- Starting Main Stream (Hardware: $HARDWARE_ACCEL, Direct YouTube: $DIRECT_YOUTUBE_MODE) ---"
 
+# Preflight: probe the ingest layer by layer (DNS -> TCP -> TLS) so a blocked
+# port or a broken TLS path is named explicitly instead of surfacing as
+# FFmpeg's generic "I/O error". Backgrounded so it never delays the stream.
+if [ -n "$YOUTUBE_KEY" ]; then
+    (
+        python3 /ingest_probe.py --text "$YOUTUBE_URL" 2>/dev/null | while IFS= read -r _l; do log "$_l"; done
+    ) &
+fi
+
 if [ "$SCALING_MODE" = "fill" ]; then
     CAMERA_FILTER="[0:v]scale=2560:1440:force_original_aspect_ratio=increase:flags=bicubic,crop=2560:1440,format=yuv420p[base]"
 else
@@ -440,22 +528,29 @@ FILTER_CHAIN="$CAMERA_FILTER"
 LAST_V="base"
 INPUT_COUNT=1
 
+# Overlay positions come from /config/overlay_layout.json (editable in the
+# Admin WebUI). Coordinates are absolute within the 2560x1440 canvas above.
 add_overlay() {
-    local path=$1; local pos=$2; local width=$3; local height=$4
-    local coords=""
-    case $pos in tl) coords="20:20" ;; tr) coords="main_w-overlay_w-20:20" ;; br) coords="main_w-overlay_w-20:main_h-overlay_h-20" ;; bl) coords="20:main_h-overlay_h-20" ;; esac
+    local path=$1; local x=$2; local y=$3; local w=$4; local h=$5
 
     # Append to OVERLAY_INPUTS instead of the main string, so we can reuse it
     OVERLAY_INPUTS="$OVERLAY_INPUTS -f concat -safe 0 -stream_loop -1 -i $path"
 
-    if [ -n "$height" ]; then scale_cmd="scale=${width}:${height}"; else scale_cmd="scale=${width}:${width}"; fi
-    FILTER_CHAIN="${FILTER_CHAIN};[${INPUT_COUNT}:v]${scale_cmd},format=rgba[ovr${INPUT_COUNT}];[${LAST_V}][ovr${INPUT_COUNT}]overlay=${coords}:eof_action=pass:shortest=0[v${INPUT_COUNT}]"
+    # force_original_aspect_ratio=decrease: resizing a box never distorts a logo
+    local scale_cmd="scale=${w}:${h}:force_original_aspect_ratio=decrease"
+    FILTER_CHAIN="${FILTER_CHAIN};[${INPUT_COUNT}:v]${scale_cmd},format=rgba[ovr${INPUT_COUNT}];[${LAST_V}][ovr${INPUT_COUNT}]overlay=${x}:${y}:eof_action=pass:shortest=0[v${INPUT_COUNT}]"
     LAST_V="v$INPUT_COUNT"; INPUT_COUNT=$((INPUT_COUNT+1))
 }
 
-add_overlay "$AD_PLAYLIST_TL" "tl" "$SCALE_ADS_TL" ""
-add_overlay "$AD_PLAYLIST_TR" "tr" "$SCALE_ADS_TR" ""
-if [ "$WEATHER_ENABLED" = "true" ]; then add_overlay "$WEATHER_LIST" "br" "900" "500"; fi
+if [ "$LAYOUT_TL_ENABLED" = "1" ]; then
+    add_overlay "$AD_PLAYLIST_TL" "$LAYOUT_TL_X" "$LAYOUT_TL_Y" "$LAYOUT_TL_W" "$LAYOUT_TL_H"
+fi
+if [ "$LAYOUT_TR_ENABLED" = "1" ]; then
+    add_overlay "$AD_PLAYLIST_TR" "$LAYOUT_TR_X" "$LAYOUT_TR_Y" "$LAYOUT_TR_W" "$LAYOUT_TR_H"
+fi
+if [ "$WEATHER_ENABLED" = "true" ] && [ "$LAYOUT_WEATHER_ENABLED" = "1" ]; then
+    add_overlay "$WEATHER_LIST" "$LAYOUT_WEATHER_X" "$LAYOUT_WEATHER_Y" "$LAYOUT_WEATHER_W" "$LAYOUT_WEATHER_H"
+fi
 
 if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
     log "--- Direct YouTube Mode: Single FFmpeg pipeline ---"
@@ -476,12 +571,12 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         # NOTE: stdout stays redirected to stderr so $(...) PID capture stays clean;
         # stderr is tee'd into $FFMPEG_LOG for the Admin WebUI log viewer.
         if [ "$audio_mode" = "unmuted" ]; then
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(tee -a "$FFMPEG_LOG" >&2) &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
         elif [ "$audio_mode" = "music" ]; then
             # Music mode: stream from playlist, loop infinitely with -stream_loop -1
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(tee -a "$FFMPEG_LOG" >&2) &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
         else
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(tee -a "$FFMPEG_LOG" >&2) &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
         fi
         echo $!
     }
@@ -514,7 +609,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             -map "[vfinal]" -map $((INPUT_COUNT)):a \
             $video_codec -c:a aac -b:a 128k \
             $FFMPEG_PROGRESS_ARG \
-            -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(tee -a "$FFMPEG_LOG" >&2) &
+            -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
         echo $!
     }
 
@@ -549,8 +644,39 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                     RETRY_COUNT=$((RETRY_COUNT+1))
                 done
                 if ! kill -0 $FFMPEG_PID 2>/dev/null; then
+                    # Diagnose WHICH leg failed before deciding what to do. The
+                    # BRB screen publishes to the SAME output, so falling back
+                    # when the *output* is broken just fails again instantly and
+                    # hammers the ingest server in a tight loop.
+                    STARTUP_FAIL_COUNT=$(( ${STARTUP_FAIL_COUNT:-0} + 1 ))
+                    OUTPUT_SIDE=0
+                    if ! check_youtube_ingest; then
+                        log "[ERROR] Cannot reach the ${YT_SCHEME} ingest ${YT_HOST}:${YT_PORT}."
+                        log "[ERROR] Nothing can be published until that endpoint is reachable from this container."
+                        OUTPUT_SIDE=1
+                    elif check_rtsp_basic; then
+                        log "[ERROR] Camera AND ingest (${YT_HOST}:${YT_PORT}) are both reachable, but FFmpeg refused to start."
+                        # Layer-by-layer probe distinguishes a TLS problem from a rejected key
+                        python3 /ingest_probe.py --text "$YOUTUBE_URL" 2>/dev/null | while IFS= read -r _l; do log "$_l"; done
+                        log "[ERROR] If the probe above says the ingest is fine, this is an output-side"
+                        log "[ERROR] rejection: a bad/rotated stream key, a broadcast that is not live-ready,"
+                        log "[ERROR] or another encoder already publishing with the same key."
+                        log "[ERROR] Last FFmpeg output:"
+                        tail -n 8 "$FFMPEG_LOG" 2>/dev/null | while IFS= read -r _l; do log "    $_l"; done
+                        OUTPUT_SIDE=1
+                    fi
+
+                    if [ "$OUTPUT_SIDE" = "1" ]; then
+                        BACKOFF=$(( STARTUP_FAIL_COUNT * 10 ))
+                        [ $BACKOFF -gt 120 ] && BACKOFF=120
+                        log "Staying in normal mode (BRB would hit the same output). Retry #$STARTUP_FAIL_COUNT in ${BACKOFF}s..."
+                        FFMPEG_PID=""
+                        sleep $BACKOFF
+                        continue
+                    fi
+
                     if [ "$FALLBACK_ENABLED" = "true" ]; then
-                        log "Startup failed. Forcing Fallback..."
+                        log "Camera unreachable at startup. Switching to Fallback..."
                         CURRENT_MODE="fallback"
                         echo "fallback" > "$STREAM_MODE_FILE"
                         FFMPEG_PID=$(run_fallback_ffmpeg)
@@ -562,6 +688,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                         continue
                     fi
                 fi
+                STARTUP_FAIL_COUNT=0
                 echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
                 log "FFmpeg started (PID: $FFMPEG_PID)"
             else
@@ -753,17 +880,17 @@ else
                 if [ "$AUDIO_MODE" = "unmuted" ]; then
                     ffmpeg -hide_banner -loglevel warning $YT_HW_INIT -rtsp_transport tcp -i "$LOCAL_URL" \
                         -vf "$YT_FILTERS" -map 0:v:0 -map 0:a:0? $YT_CODEC -c:a aac -b:a 128k -ac 2 \
-                        $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2> >(tee -a "$FFMPEG_LOG" >&2) &
+                        $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
                 elif [ "$AUDIO_MODE" = "music" ]; then
                     ffmpeg -hide_banner -loglevel warning $YT_HW_INIT -rtsp_transport tcp -i "$LOCAL_URL" \
                         -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" \
                         -vf "$YT_FILTERS" -map 0:v:0 -map 1:a $YT_CODEC -c:a aac -b:a 128k -ac 2 \
-                        $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2> >(tee -a "$FFMPEG_LOG" >&2) &
+                        $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
                 else
                     ffmpeg -hide_banner -loglevel warning $YT_HW_INIT -rtsp_transport tcp -i "$LOCAL_URL" \
                         -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
                         -vf "$YT_FILTERS" -map 0:v:0 -map 1:a:0 $YT_CODEC -c:a aac -b:a 128k \
-                        $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2> >(tee -a "$FFMPEG_LOG" >&2) &
+                        $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
                 fi
                 YT_PID=$!
                 echo $YT_PID > "/config/youtube_restreamer.pid"

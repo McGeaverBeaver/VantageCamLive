@@ -42,6 +42,9 @@ import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+import overlay_layout
+import ingest_probe
+
 # ==============================================================================
 #  CONFIGURATION
 # ==============================================================================
@@ -372,8 +375,9 @@ class PreviewManager:
     # ---- command construction ------------------------------------------------
 
     def _build_cmd(self, source):
-        canvas_w, canvas_h = 2560, 1440  # overlay canvas used by start.sh
+        canvas_w, canvas_h = overlay_layout.CANVAS_W, overlay_layout.CANVAS_H
         fps = 1 if PREVIEW_LOW_CPU else PREVIEW_FPS
+        layout = overlay_layout.load()
 
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
 
@@ -404,11 +408,17 @@ class PreviewManager:
                         f"force_original_aspect_ratio=decrease:flags=bilinear,"
                         f"pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih)/2,format=yuv420p[base]")
 
-        # Overlay inputs - identical playlists to the broadcast pipeline.
-        overlays = [(AD_PLAYLIST_TL, f"scale={SCALE_TL}:{SCALE_TL}", "20:20"),
-                    (AD_PLAYLIST_TR, f"scale={SCALE_TR}:{SCALE_TR}", "main_w-overlay_w-20:20")]
-        if WEATHER_ENABLED:
-            overlays.append((WEATHER_LIST, "scale=900:500", "main_w-overlay_w-20:main_h-overlay_h-20"))
+        # Overlay inputs - identical playlists AND identical positions to the
+        # broadcast pipeline, so the preview is a faithful proof of what airs.
+        overlays = []
+        for slot, playlist in (("tl", AD_PLAYLIST_TL), ("tr", AD_PLAYLIST_TR),
+                               ("weather", WEATHER_LIST)):
+            if slot == "weather" and not WEATHER_ENABLED:
+                continue
+            if not layout[slot]["enabled"]:
+                continue
+            scale_cmd, coords = overlay_layout.filter_spec(layout, slot)
+            overlays.append((playlist, scale_cmd, coords))
 
         chain = base
         last = "base"
@@ -766,10 +776,17 @@ def build_status():
 
     direct_mode = bool(YOUTUBE_KEY) and not ENABLE_LOCAL_STREAM
 
+    hold_remaining = 0
+    try:
+        hold_remaining = max(0, int(read_text(RESTART_HOLD_FILE, "0") or 0) - int(now))
+    except ValueError:
+        hold_remaining = 0
+
     return {
         "time": int(now),
         "stream": {
             "mode": stream_mode,
+            "restart_hold_seconds": hold_remaining,
             "broadcasting": pid is not None,
             "pid": pid,
             "uptime_seconds": int(now - started) if started else 0,
@@ -986,6 +1003,13 @@ class AdminHandler(BaseHTTPRequestHandler):
             self._serve_preview_stream()
         elif path == "/api/preview/snapshot":
             self._serve_preview_snapshot()
+        elif path == "/api/layout":
+            self.send_json({
+                "canvas": {"width": overlay_layout.CANVAS_W, "height": overlay_layout.CANVAS_H},
+                "overlays": overlay_layout.load(),
+                "labels": overlay_layout.SLOTS,
+                "weather_enabled": WEATHER_ENABLED,
+            })
         elif path == "/api/ads":
             self.send_json({"ads": list_ads(), "slots": AD_SLOTS, "modes": AD_MODES})
         elif path == "/api/ads/image":
@@ -1165,15 +1189,69 @@ class AdminHandler(BaseHTTPRequestHandler):
         elif path == "/api/stream/restart":
             ok, msg = signal_broadcast_restart("manual restart from WebUI")
             self.send_json({"ok": ok, "message": msg}, 200 if ok else 409)
+        elif path == "/api/stream/retry-now":
+            # Cancel a pending watchdog backoff so the supervisor respawns
+            # immediately instead of sitting out the remaining hold.
+            try:
+                os.remove(RESTART_HOLD_FILE)
+                self.send_json({"ok": True, "message": "Backoff cancelled - the encoder will respawn within a couple of seconds"})
+            except FileNotFoundError:
+                self.send_json({"ok": True, "message": "No backoff was pending"})
+            except OSError as e:
+                self.send_json({"ok": False, "message": str(e)}, 500)
         elif path == "/api/weather/refresh":
             ok, msg = refresh_weather_now()
             self.send_json({"ok": ok, "message": msg}, 200 if ok else 409)
+        elif path == "/api/ingest/check":
+            url = os.getenv("YOUTUBE_URL", "rtmp://a.rtmp.youtube.com/live2")
+            try:
+                self.send_json(ingest_probe.probe(url))
+            except Exception as e:
+                self.send_json({"error": f"probe failed: {e}"}, 500)
+        elif path == "/api/layout":
+            self._handle_layout_save(query)
+        elif path == "/api/layout/reset":
+            saved = overlay_layout.save(overlay_layout.defaults())
+            preview.stop()
+            self.send_json({"ok": True, "message": "layout reset to defaults", "overlays": saved})
         elif path == "/api/ads/upload":
             self._handle_ad_upload()
         elif path == "/api/ads/delete":
             self._handle_ad_delete()
         else:
             self.send_json({"error": "not found"}, 404)
+
+    def _handle_layout_save(self, query):
+        body = self._read_body(limit=16384)
+        try:
+            payload = json.loads(body or b"{}")
+        except ValueError:
+            self.send_json({"error": "invalid JSON"}, 400)
+            return
+        overlays = payload.get("overlays", payload)
+        if not isinstance(overlays, dict):
+            self.send_json({"error": "expected an 'overlays' object"}, 400)
+            return
+
+        saved = overlay_layout.save(overlays)
+        log(f"Overlay layout saved: " + ", ".join(
+            f"{k}={v['w']}x{v['h']}@{v['x']},{v['y']}{'' if v['enabled'] else ' (off)'}"
+            for k, v in saved.items()))
+
+        # The filter graph is fixed at launch, so both pipelines must be
+        # restarted to pick up new positions. The preview restarts on its own
+        # (next start rebuilds the chain); the broadcast only if asked, since
+        # that briefly interrupts the live stream.
+        preview.stop()
+        applied = False
+        detail = "Saved. Restart the stream to apply it on air."
+        if (query.get("apply") or [""])[0].lower() in ("1", "true", "yes"):
+            ok, msg = signal_broadcast_restart("overlay layout change")
+            applied = ok
+            detail = msg if ok else f"Saved, but the broadcast could not be restarted: {msg}"
+
+        self.send_json({"ok": True, "applied": applied, "message": detail,
+                        "overlays": saved})
 
     def _handle_ad_upload(self):
         ctype = self.headers.get("Content-Type", "")

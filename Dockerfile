@@ -4,7 +4,7 @@ FROM alpine:3.19
 ARG INCLUDE_INTEL=true
 ARG ARCH=amd64
 ARG MTX_VERSION=v1.15.0
-ARG VERSION=2.9.0
+ARG VERSION=2.9.1
 
 # Image metadata
 LABEL maintainer="McGeaverBeaver"
@@ -65,8 +65,10 @@ COPY audio_api.py /audio_api.py
 COPY watchdog.py /watchdog.py
 COPY admin_api.py /admin_api.py
 COPY admin_ui.html /admin_ui.html
-RUN sed -i 's/\r$//' /start.sh /weather.py /audio_api.py /watchdog.py /admin_api.py \
-    && chmod +x /start.sh /watchdog.py /admin_api.py
+COPY overlay_layout.py /overlay_layout.py
+COPY ingest_probe.py /ingest_probe.py
+RUN sed -i 's/\r$//' /start.sh /weather.py /audio_api.py /watchdog.py /admin_api.py /overlay_layout.py /ingest_probe.py \
+    && chmod +x /start.sh /watchdog.py /admin_api.py /ingest_probe.py
 
 # 6. Create config directory and health check script
 RUN mkdir -p /config /health

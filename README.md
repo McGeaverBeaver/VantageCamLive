@@ -1,4 +1,4 @@
-# VantageCam Live v2.9.0
+# VantageCam Live v2.9.1
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker Build](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml/badge.svg)](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml)
@@ -20,8 +20,9 @@ Transform a standard security camera feed into a professional broadcast without 
 ## 📋 Table of Contents
 
 - [Key Features](#-key-features)
-- [What's New in v2.9.0](#-whats-new-in-v290)
+- [What's New in v2.9.1](#-whats-new-in-v291)
 - [Admin WebUI & Stream Preview](#-admin-webui--stream-preview)
+- [Stream Won't Start?](#-stream-wont-start)
 - [Getting Started](#-getting-started)
 - [Docker Compose](#-docker-compose)
 - [Direct-to-YouTube Mode](#-direct-to-youtube-mode)
@@ -66,6 +67,46 @@ Transform a standard security camera feed into a professional broadcast without 
 - **Exponential Backoff** — Smart retry delays prevent hammering YouTube
 - **Auto-PUBLIC** — Restores stream visibility after recovery via YouTube API
 - **Discord Alerts** — Instant notifications for offline/recovery/errors
+
+---
+
+## 🚀 What's New in v2.9.1
+
+### 📐 Drag-and-Drop Overlay Positioning
+Overlay positions are no longer hardcoded to the corners. In **Admin WebUI → Overlay Layout**
+you can drag each overlay anywhere, resize it from its corner, or hide it entirely — with the
+live preview as the backdrop so you see exactly what you are arranging.
+
+- Positions live in `/config/overlay_layout.json` and survive restarts
+- Coordinates are in the 2560×1440 composition canvas, so one layout is correct at 1080p, 1440p and 4K
+- Sponsor logos are re-rendered at the box size you choose, so resizing stays crisp
+- Hiding an overlay removes its FFmpeg input entirely (a little less CPU)
+- **Save** applies to the preview; **Save & Apply** also restarts the encoder to push it on air
+
+### 🧪 Ingest Diagnostics
+FFmpeg reports every publishing failure as a generic `I/O error`, which makes a blocked port,
+a broken TLS path and a rejected stream key look identical. The new **Diagnostics** page (and a
+boot-time check) walks the path one layer at a time — **DNS → TCP → TLS handshake** — and names
+the layer that failed, with a specific remedy. It sends no stream key, so it is safe to run while live.
+
+### 🖥️ Redesigned Admin UI
+The dashboard is now a sectioned app with a sidebar (Dashboard, Live Preview, Overlay Layout,
+Sponsors, Weather, Audio, Diagnostics, Logs, Settings) instead of one endless scrolling page.
+Status pills stay pinned in the header on every page, sections deep-link via `#hash`, each
+section loads only when opened, and the sidebar collapses to a menu on phones.
+
+### 🐛 Fixes
+- **No more BRB flapping when YouTube is the problem.** A failed startup used to switch to the
+  "We'll Be Right Back" screen — but BRB publishes to the *same* output, so it failed instantly
+  and bounced back, reconnecting to YouTube every couple of seconds. The supervisor now checks
+  which leg actually failed and, for output-side failures, stays in normal mode with a growing
+  backoff instead.
+- **Stream keys are redacted from logs.** FFmpeg prints the full output URL (key included) on
+  error, which landed in `docker logs` and `ffmpeg.log` in plaintext.
+- **The watchdog no longer freezes a container that is already recovering** — it used to impose
+  a restart hold even when no FFmpeg was running for it to restart.
+- **The backoff counter resets on container start**, so a persisted attempt count from an old
+  incident no longer puts a freshly-booted container straight at the 15-minute maximum delay.
 
 ---
 
@@ -145,6 +186,46 @@ bottom-right, identical scaling) and serves it as MJPEG to your browser.
 | `/api/ads` / `/api/ads/upload` / `/api/ads/delete` | GET/POST | Sponsor logo management |
 | `/api/logs?name=watchdog\|ffmpeg\|weather` | GET | Tail logs |
 | `/api/overlay/{weather,tl,tr,fallback}` | GET | Current overlay PNGs (zero CPU) |
+| `/api/layout` | GET/POST | Overlay positions (`?apply=true` also restarts the encoder) |
+| `/api/layout/reset` | POST | Restore default corner positions |
+| `/api/ingest/check` | POST | DNS → TCP → TLS probe of the configured ingest |
+
+---
+
+## 🚑 Stream Won't Start?
+
+FFmpeg collapses every publishing failure into `I/O error`, so start by identifying **which layer**
+is broken. Open **Admin WebUI → Diagnostics → Test Ingest Connection**, or from a shell:
+
+```bash
+docker exec vantagecam python3 /ingest_probe.py --text "$YOUTUBE_URL"
+```
+
+| Probe result | Meaning | Fix |
+|:-------------|:--------|:----|
+| **DNS FAILED** | The container can't resolve the ingest host | Fix the container's DNS |
+| **TCP FAILED** | The port is blocked before TLS is attempted | A firewall/ISP is blocking outbound `rtmps` 443 or `rtmp` 1935. Try the other ingest. |
+| **TLS FAILED** (works without verification) | Stale/missing CA trust store | Refresh `ca-certificates` in the image |
+| **TLS FAILED** (fails either way) | Something is terminating TLS on that port (deep packet inspection / transparent proxy) | Switch to `YOUTUBE_URL=rtmp://a.rtmp.youtube.com/live2` |
+| **All ok**, stream still won't start | The endpoint is fine, so the *key* is being rejected | Reset the key in YouTube Studio; make sure no other encoder is using it |
+
+### Telling the two apart in the FFmpeg log
+
+The layer that fails is named in the error, and the two cases look different:
+
+```
+# Stream key rejected — TLS succeeded, YouTube dropped the RTMP handshake:
+[rtmps @ ...] Cannot read RTMP handshake response
+Error opening output files: End of file
+
+# Network/TLS path broken — never got as far as RTMP:
+[tls @ ...] IO error: End of file
+Error opening output files: I/O error
+```
+
+> ⚠️ **Only one encoder may use a stream key at a time.** If an older container is still running
+> (or several restarts overlapped), YouTube rejects the newcomer. Confirm with
+> `docker ps | grep vantagecam` before hunting further.
 
 ---
 
