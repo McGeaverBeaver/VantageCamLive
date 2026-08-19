@@ -72,6 +72,15 @@ FLASH_ON_DURATION="${FLASH_ON_DURATION:-0.7}"
 FLASH_OFF_DURATION="${FLASH_OFF_DURATION:-0.3}"
 WATCHDOG_ENABLED="${WATCHDOG_ENABLED:-false}"
 
+# Day/night source: "sun" follows real sunrise/sunset for WEATHER_LAT/LON,
+# "clock" keeps the fixed DAY_START_HOUR/DAY_END_HOUR schedule.
+DAY_NIGHT_MODE="${DAY_NIGHT_MODE:-sun}"
+DAY_NIGHT_FILE="$WORKDIR/day_night"
+
+# Extra RTMP destinations, comma separated, each a complete URL including its
+# own stream key (e.g. rtmp://live-api-s.facebook.com:80/rtmp/FB-KEY).
+SIMULCAST_URLS="${SIMULCAST_URLS:-}"
+
 if [ -n "$YOUTUBE_KEY" ] && [ "$ENABLE_LOCAL_STREAM" != "true" ]; then DIRECT_YOUTUBE_MODE="true"; else DIRECT_YOUTUBE_MODE="false"; fi
 
 WEATHER_COMBINED="$WORKDIR/weather_combined.png"
@@ -148,6 +157,27 @@ rm -f "$RESTART_HOLD_FILE"
 # may belong to an unrelated process that the audio API/watchdog would signal.
 rm -f "$WORKDIR/youtube_restreamer.pid"
 
+# --- EVENT TIMELINE ---
+# One JSON line per significant transition, read back by the Admin WebUI.
+# Written straight from bash (no Python spawn) so it is cheap enough to call
+# from the supervision loop.
+EVENTS_FILE="$WORKDIR/events.jsonl"
+record_event() {
+    local etype="$1" level="$2" msg="$3" esc
+    # Escape backslashes then quotes so the line is always valid JSON
+    esc=${msg//\\/\\\\}
+    esc=${esc//\"/\\\"}
+    # Strip every control character (tabs, CR, newlines): a raw one makes the
+    # line invalid JSON and would break the whole timeline reader.
+    esc=${esc//[$'\001'-$'\037']/ }
+    printf '{"ts":%s,"type":"%s","level":"%s","msg":"%s"}\n' \
+        "$(date +%s)" "$etype" "$level" "$esc" >> "$EVENTS_FILE" 2>/dev/null
+    # Keep it bounded without rewriting on every append
+    if [ "$(wc -c < "$EVENTS_FILE" 2>/dev/null || echo 0)" -gt 307200 ]; then
+        tail -n 2000 "$EVENTS_FILE" > "$EVENTS_FILE.tmp" 2>/dev/null && mv -f "$EVENTS_FILE.tmp" "$EVENTS_FILE"
+    fi
+}
+
 # ==============================================================================
 #  HEALTH CHECK FUNCTIONS
 # ==============================================================================
@@ -177,6 +207,35 @@ parse_youtube_endpoint() {
 }
 parse_youtube_endpoint
 
+# Build the FFmpeg output. With no simulcast targets this is the plain flv
+# muxer exactly as before; with targets it becomes a tee fan-out where every
+# leg carries onfail=ignore, so a dead Facebook/Twitch endpoint can never take
+# the YouTube broadcast down with it.
+build_output_target() {
+    OUTPUT_EXTRA=""
+    if [ -z "$SIMULCAST_URLS" ]; then
+        OUTPUT_FORMAT="flv"
+        OUTPUT_TARGET="${YOUTUBE_URL}/${YOUTUBE_KEY}"
+        return
+    fi
+    local spec="[f=flv:onfail=ignore]${YOUTUBE_URL}/${YOUTUBE_KEY}" u count=0
+    IFS=',' read -ra _urls <<< "$SIMULCAST_URLS"
+    for u in "${_urls[@]}"; do
+        u="${u#"${u%%[![:space:]]*}"}"; u="${u%"${u##*[![:space:]]}"}"
+        [ -z "$u" ] && continue
+        spec="${spec}|[f=flv:onfail=ignore]${u}"
+        count=$((count+1))
+    done
+    if [ $count -eq 0 ]; then
+        OUTPUT_FORMAT="flv"; OUTPUT_TARGET="${YOUTUBE_URL}/${YOUTUBE_KEY}"; return
+    fi
+    OUTPUT_FORMAT="tee"
+    OUTPUT_TARGET="$spec"
+    OUTPUT_EXTRA="-flags +global_header"
+    log "Simulcast enabled: YouTube + $count additional destination(s)"
+}
+build_output_target
+
 check_youtube_ingest() {
     [ -n "$YT_HOST" ] || return 0
     timeout 5 bash -c "echo >/dev/tcp/$YT_HOST/$YT_PORT" 2>/dev/null
@@ -187,11 +246,28 @@ check_youtube_ingest() {
 # `docker logs` and /config/ffmpeg.log in plaintext.
 # Pure bash on purpose: Alpine's sed is busybox (no -u), so a sed filter would
 # block-buffer the log. The quoted pattern makes the match literal.
+# Every secret that can appear in FFmpeg output: the YouTube key plus the key
+# portion of each simulcast URL.
+SECRETS=()
+[ -n "$YOUTUBE_KEY" ] && SECRETS+=("$YOUTUBE_KEY")
+if [ -n "$SIMULCAST_URLS" ]; then
+    IFS=',' read -ra _simul_list <<< "$SIMULCAST_URLS"
+    for _u in "${_simul_list[@]}"; do
+        _u="${_u//[[:space:]]/}"
+        [ -z "$_u" ] && continue
+        _tail="${_u##*/}"                      # last path segment = the key
+        [ -n "$_tail" ] && [ ${#_tail} -ge 8 ] && SECRETS+=("$_tail")
+    done
+fi
+
 scrub_key() {
-    if [ -z "$YOUTUBE_KEY" ]; then cat; return; fi
-    local line
+    if [ ${#SECRETS[@]} -eq 0 ]; then cat; return; fi
+    local line secret
     while IFS= read -r line || [ -n "$line" ]; do
-        printf '%s\n' "${line//"$YOUTUBE_KEY"/<STREAM_KEY>}"
+        for secret in "${SECRETS[@]}"; do
+            line="${line//"$secret"/<STREAM_KEY>}"
+        done
+        printf '%s\n' "$line"
     done
 }
 check_rtsp_robust() {
@@ -416,7 +492,56 @@ echo "normal" > "$STREAM_MODE_FILE"
 # ==============================================================================
 #  BACKGROUND MANAGERS
 # ==============================================================================
-get_mode() { local hr=$(date +%-H); if [ "$hr" -ge "$DAY_START_HOUR" ] && [ "$hr" -lt "$DAY_END_HOUR" ]; then echo "DAY"; else echo "NIGHT"; fi; }
+# DAY/NIGHT for sponsor rotation. In "sun" mode the answer is precomputed into
+# $DAY_NIGHT_FILE by the solar manager below, so this stays a cheap file read
+# even though it is called from tight loops; it falls back to the fixed clock
+# schedule whenever that file is missing or stale.
+get_mode() {
+    if [ "$DAY_NIGHT_MODE" = "sun" ] && [ -s "$DAY_NIGHT_FILE" ]; then
+        local m; m=$(cat "$DAY_NIGHT_FILE" 2>/dev/null)
+        if [ "$m" = "DAY" ] || [ "$m" = "NIGHT" ]; then echo "$m"; return; fi
+    fi
+    local hr; hr=$(date +%-H)
+    if [ "$hr" -ge "$DAY_START_HOUR" ] && [ "$hr" -lt "$DAY_END_HOUR" ]; then echo "DAY"; else echo "NIGHT"; fi
+}
+
+# Solar manager: resolves sunrise/sunset once a minute (the fetch itself is
+# cached per day inside sun_times.py, so this is one HTTP call every 24h).
+if [ "$DAY_NIGHT_MODE" = "sun" ]; then
+    SUN_INIT=$(python3 /sun_times.py 2>/dev/null || echo "unavailable")
+    log "Day/night source: sunrise-sunset (currently $SUN_INIT)"
+    (
+        LAST_SUN_MODE=""
+        while true; do
+            python3 /sun_times.py >/dev/null 2>&1
+            NOW_MODE=$(cat "$DAY_NIGHT_FILE" 2>/dev/null)
+            if [ -n "$NOW_MODE" ] && [ "$NOW_MODE" != "$LAST_SUN_MODE" ]; then
+                [ -n "$LAST_SUN_MODE" ] && record_event "sponsor" "info" "Switched to $NOW_MODE sponsors (solar)"
+                LAST_SUN_MODE="$NOW_MODE"
+            fi
+            sleep 60
+        done
+    ) &
+else
+    log "Day/night source: fixed clock (${DAY_START_HOUR}:00-${DAY_END_HOUR}:00)"
+fi
+
+# Sponsor rotation honours the schedule in /config/ads/sponsors.json. If that
+# lookup fails for any reason we fall back to a plain directory glob, so a bug
+# in the scheduler can never blank the overlays.
+list_sponsors() {
+    local slot="$1" mode="$2" out
+    if out=$(python3 /sponsors.py list "$slot" "$mode" 2>/dev/null); then
+        printf '%s\n' "$out"
+        return
+    fi
+    shopt -s nocaseglob nullglob
+    local d="$ADS_BASE/$slot/$mode"
+    printf '%s\n' "$d"/*.png "$d"/*.jpg "$d"/*.jpeg "$d"/*.webp
+}
+
+# Airtime ledger (backgrounded - never delay a rotation for bookkeeping)
+record_airtime() { python3 /sponsors.py record "$1" "$2" "$(basename "$3")" "$4" >/dev/null 2>&1 & }
 
 # TL Manager
 (
@@ -426,8 +551,8 @@ get_mode() { local hr=$(date +%-H); if [ "$hr" -ge "$DAY_START_HOUR" ] && [ "$hr
         # the operator picked in the WebUI (keeps them crisp after a resize).
         [ -f "$OVERLAY_LAYOUT_SH" ] && . "$OVERLAY_LAYOUT_SH"
         TL_W="${LAYOUT_TL_W:-$SCALE_ADS_TL}"; TL_H="${LAYOUT_TL_H:-$SCALE_ADS_TL}"
-        MODE=$(get_mode); TARGET_DIR="$ADS_BASE/topleft/$MODE"
-        FILES=("$TARGET_DIR"/*.png "$TARGET_DIR"/*.jpg "$TARGET_DIR"/*.jpeg "$TARGET_DIR"/*.webp)
+        MODE=$(get_mode)
+        mapfile -t FILES < <(list_sponsors topleft "$MODE" | grep -v '^[[:space:]]*$')
         if [ ${#FILES[@]} -eq 0 ]; then
             # Atomic swap: never rewrite the live overlay in place while ffmpeg reads it
             if python3 /weather.py blank "$AD_TEMP_TL" "$TL_W" "$TL_H"; then mv -f "$AD_TEMP_TL" "$AD_FINAL_TL"; fi
@@ -440,6 +565,7 @@ get_mode() { local hr=$(date +%-H); if [ "$hr" -ge "$DAY_START_HOUR" ] && [ "$hr
                     if python3 /weather.py ad "$AD_TEMP_TL" "$f" "$TL_W" "$TL_H"; then mv -f "$AD_TEMP_TL" "$AD_FINAL_TL"; LAST_AD_HASH_TL="$CURRENT_HASH"; fi
                 fi
                 sleep "$AD_ROTATE_TIMER_TL"
+                record_airtime topleft "$MODE" "$f" "$AD_ROTATE_TIMER_TL"
             done
         fi
     done
@@ -451,8 +577,8 @@ get_mode() { local hr=$(date +%-H); if [ "$hr" -ge "$DAY_START_HOUR" ] && [ "$hr
     while true; do
         [ -f "$OVERLAY_LAYOUT_SH" ] && . "$OVERLAY_LAYOUT_SH"
         TR_W="${LAYOUT_TR_W:-$SCALE_ADS_TR}"; TR_H="${LAYOUT_TR_H:-$SCALE_ADS_TR}"
-        MODE=$(get_mode); TARGET_DIR="$ADS_BASE/topright/$MODE"
-        FILES=("$TARGET_DIR"/*.png "$TARGET_DIR"/*.jpg "$TARGET_DIR"/*.jpeg "$TARGET_DIR"/*.webp)
+        MODE=$(get_mode)
+        mapfile -t FILES < <(list_sponsors topright "$MODE" | grep -v '^[[:space:]]*$')
         if [ ${#FILES[@]} -eq 0 ]; then
             if python3 /weather.py blank "$AD_TEMP_TR" "$TR_W" "$TR_H"; then mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"; fi
             LAST_AD_HASH_TR=""; sleep 60; else
@@ -462,6 +588,7 @@ get_mode() { local hr=$(date +%-H); if [ "$hr" -ge "$DAY_START_HOUR" ] && [ "$hr
                 if python3 /weather.py ad "$AD_TEMP_TR" "${FILES[$TR_INDEX]}" "$TR_W" "$TR_H"; then mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"; LAST_AD_HASH_TR="$CURRENT_HASH"; fi
             fi
             sleep "$TR_SHOW_SECONDS"
+            record_airtime topright "$MODE" "${FILES[$TR_INDEX]}" "$TR_SHOW_SECONDS"
             python3 /weather.py blank "$AD_TEMP_TR" "$TR_W" "$TR_H"; mv -f "$AD_TEMP_TR" "$AD_FINAL_TR"; LAST_AD_HASH_TR=""; sleep "$TR_HIDE_SECONDS"; TR_INDEX=$((TR_INDEX + 1))
         fi
     done
@@ -501,6 +628,7 @@ if [ "$WATCHDOG_ENABLED" = "true" ] && [ -n "$YOUTUBE_KEY" ]; then log "--- Star
 #  MAIN STREAM ENCODING
 # ==============================================================================
 log "--- Starting Main Stream (Hardware: $HARDWARE_ACCEL, Direct YouTube: $DIRECT_YOUTUBE_MODE) ---"
+record_event "boot" "info" "Container started (encoder: ${HARDWARE_ACCEL:+VAAPI}${HARDWARE_ACCEL:-software}, direct: $DIRECT_YOUTUBE_MODE)"
 
 # Preflight: probe the ingest layer by layer (DNS -> TCP -> TLS) so a blocked
 # port or a broken TLS path is named explicitly instead of surfacing as
@@ -579,12 +707,12 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         # NOTE: stdout stays redirected to stderr so $(...) PID capture stays clean;
         # stderr is tee'd into $FFMPEG_LOG for the Admin WebUI log viewer.
         if [ "$audio_mode" = "unmuted" ]; then
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$final_filters" -map "[vfinal]" -map 0:a? $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG $OUTPUT_EXTRA -f "$OUTPUT_FORMAT" "$OUTPUT_TARGET" 1>&2 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
         elif [ "$audio_mode" = "music" ]; then
             # Music mode: stream from playlist, loop infinitely with -stream_loop -1
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k -ac 2 $FFMPEG_PROGRESS_ARG $OUTPUT_EXTRA -f "$OUTPUT_FORMAT" "$OUTPUT_TARGET" 1>&2 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
         else
-            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
+            ffmpeg -hide_banner -loglevel warning $hw_init $RTSP_INPUT_OPTS $OVERLAY_INPUTS -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -filter_complex "$final_filters" -map "[vfinal]" -map $((INPUT_COUNT)):a $video_codec -c:a aac -b:a 128k $FFMPEG_PROGRESS_ARG $OUTPUT_EXTRA -f "$OUTPUT_FORMAT" "$OUTPUT_TARGET" 1>&2 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
         fi
         echo $!
     }
@@ -617,7 +745,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             -map "[vfinal]" -map $((INPUT_COUNT)):a \
             $video_codec -c:a aac -b:a 128k \
             $FFMPEG_PROGRESS_ARG \
-            -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 1>&2 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
+            $OUTPUT_EXTRA -f "$OUTPUT_FORMAT" "$OUTPUT_TARGET" 1>&2 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
         echo $!
     }
 
@@ -640,6 +768,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             fi
             if [ "$PAUSE_ANNOUNCED" != "1" ]; then
                 log "[Control] Broadcast is STOPPED. Press Start in the Admin WebUI to resume."
+                record_event "operator_stop" "warn" "Broadcast stopped by operator"
                 echo "stopped" > "$STREAM_MODE_FILE"
                 PAUSE_ANNOUNCED=1
             fi
@@ -649,6 +778,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         fi
         if [ "$PAUSE_ANNOUNCED" = "1" ]; then
             log "[Control] Broadcast resumed by operator."
+            record_event "operator_start" "success" "Broadcast resumed by operator"
             PAUSE_ANNOUNCED=0
             CURRENT_MODE="normal"
             echo "normal" > "$STREAM_MODE_FILE"
@@ -704,6 +834,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                         BACKOFF=$(( STARTUP_FAIL_COUNT * 10 ))
                         [ $BACKOFF -gt 120 ] && BACKOFF=120
                         log "Staying in normal mode (BRB would hit the same output). Retry #$STARTUP_FAIL_COUNT in ${BACKOFF}s..."
+                        record_event "encoder_fail" "error" "Publishing failed (attempt $STARTUP_FAIL_COUNT) - ingest reachable but refused; retrying in ${BACKOFF}s"
                         FFMPEG_PID=""
                         sleep $BACKOFF
                         continue
@@ -711,6 +842,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 
                     if [ "$FALLBACK_ENABLED" = "true" ]; then
                         log "Camera unreachable at startup. Switching to Fallback..."
+                        record_event "camera_down" "error" "Camera unreachable at startup - showing BRB screen"
                         CURRENT_MODE="fallback"
                         echo "fallback" > "$STREAM_MODE_FILE"
                         FFMPEG_PID=$(run_fallback_ffmpeg)
@@ -725,6 +857,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 STARTUP_FAIL_COUNT=0
                 echo $FFMPEG_PID > "/config/youtube_restreamer.pid"
                 log "FFmpeg started (PID: $FFMPEG_PID)"
+                record_event "encoder_start" "success" "Encoder started (PID $FFMPEG_PID, audio $AUDIO_MODE)"
             else
                 FFMPEG_PID=$(run_fallback_ffmpeg)
                 FFMPEG_START_TIME=$(date +%s)
@@ -751,6 +884,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                     FROZEN_COUNT=$((FROZEN_COUNT + 1))
                     if [ $FROZEN_COUNT -ge 12 ]; then
                         log "[ERROR] FFmpeg FROZEN (no progress writes for 12s after ${FFMPEG_UPTIME}s uptime). Killing..."
+                        record_event "encoder_fail" "error" "Encoder frozen (no progress for 12s) - restarting"
                         kill -9 $FFMPEG_PID 2>/dev/null
                         break
                     fi
@@ -766,6 +900,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                     VIDEO_FROZEN_COUNT=$((VIDEO_FROZEN_COUNT + 1))
                     if [ $VIDEO_FROZEN_COUNT -ge 30 ]; then
                         log "[ERROR] Video FROZEN at frame $CURRENT_FRAME for 30s (audio still flowing). Killing..."
+                        record_event "encoder_fail" "error" "Video frozen at frame $CURRENT_FRAME while audio kept flowing - restarting"
                         kill -9 $FFMPEG_PID 2>/dev/null
                         break
                     fi
@@ -794,6 +929,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 NEW_AUDIO=$(cat "/config/audio_mode" 2>/dev/null || echo "muted")
                 if [ "$NEW_AUDIO" != "$AUDIO_MODE" ]; then
                     log "Audio Change"
+                    record_event "audio" "info" "Audio mode changed: $AUDIO_MODE -> $NEW_AUDIO"
                     kill $FFMPEG_PID 2>/dev/null
                     # Confirm the old encoder is dead before respawning - two
                     # encoders on the same stream key glitch the YouTube ingest
@@ -812,6 +948,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
                    if ! check_rtsp_basic; then
                        log "[Fallback] RTSP Ping Failed - Killing PID $FFMPEG_PID..."
+                       record_event "camera_down" "error" "Camera stopped responding - switching to BRB screen"
                        kill -9 $FFMPEG_PID 2>/dev/null
                        break
                    fi
@@ -819,6 +956,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                 if [ "$CURRENT_MODE" = "fallback" ]; then
                    if check_rtsp_basic; then
                        log "[Fallback] RTSP Recovered! Killing BRB Stream (PID $FFMPEG_PID) to switch..."
+                       record_event "camera_up" "success" "Camera came back - leaving BRB screen"
                        kill -9 $FFMPEG_PID 2>/dev/null
                        break
                    fi
@@ -858,12 +996,14 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                     sleep $RETRY_DELAY
                 else
                     log "[Fallback] Stream died (Code $EXIT_CODE). Switching..."
+                    record_event "fallback_enter" "warn" "Encoder died and camera is unreachable - BRB screen live"
                     CURRENT_MODE="fallback"
                     echo "fallback" > "$STREAM_MODE_FILE"
                 fi
             elif [ "$CURRENT_MODE" = "fallback" ]; then
                  if check_rtsp_basic; then
                      log "[Fallback] Ready. Switching to Normal..."
+                     record_event "fallback_exit" "success" "Returning to the camera feed"
                      CURRENT_MODE="normal"
                      echo "normal" > "$STREAM_MODE_FILE"
                  else sleep 1; fi
@@ -918,17 +1058,17 @@ else
                 if [ "$AUDIO_MODE" = "unmuted" ]; then
                     ffmpeg -hide_banner -loglevel warning $YT_HW_INIT -rtsp_transport tcp -i "$LOCAL_URL" \
                         -vf "$YT_FILTERS" -map 0:v:0 -map 0:a:0? $YT_CODEC -c:a aac -b:a 128k -ac 2 \
-                        $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
+                        $FFMPEG_PROGRESS_ARG $OUTPUT_EXTRA -f "$OUTPUT_FORMAT" "$OUTPUT_TARGET" 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
                 elif [ "$AUDIO_MODE" = "music" ]; then
                     ffmpeg -hide_banner -loglevel warning $YT_HW_INIT -rtsp_transport tcp -i "$LOCAL_URL" \
                         -stream_loop -1 -f concat -safe 0 -i "$MUSIC_PLAYLIST" \
                         -vf "$YT_FILTERS" -map 0:v:0 -map 1:a $YT_CODEC -c:a aac -b:a 128k -ac 2 \
-                        $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
+                        $FFMPEG_PROGRESS_ARG $OUTPUT_EXTRA -f "$OUTPUT_FORMAT" "$OUTPUT_TARGET" 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
                 else
                     ffmpeg -hide_banner -loglevel warning $YT_HW_INIT -rtsp_transport tcp -i "$LOCAL_URL" \
                         -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 \
                         -vf "$YT_FILTERS" -map 0:v:0 -map 1:a:0 $YT_CODEC -c:a aac -b:a 128k \
-                        $FFMPEG_PROGRESS_ARG -f flv "${YOUTUBE_URL}/${YOUTUBE_KEY}" 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
+                        $FFMPEG_PROGRESS_ARG $OUTPUT_EXTRA -f "$OUTPUT_FORMAT" "$OUTPUT_TARGET" 2> >(scrub_key | tee -a "$FFMPEG_LOG" >&2) &
                 fi
                 YT_PID=$!
                 echo $YT_PID > "/config/youtube_restreamer.pid"

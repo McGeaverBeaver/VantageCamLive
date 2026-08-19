@@ -45,6 +45,8 @@ from urllib.parse import urlparse, parse_qs
 import overlay_layout
 import ingest_probe
 import youtube_api
+import sponsors
+import events
 
 # ==============================================================================
 #  CONFIGURATION
@@ -63,6 +65,10 @@ _KNOWN_DEFAULT_PASSWORDS = {"", "your_secure_password", "change_me_please"}
 RTSP_SOURCE = os.getenv("RTSP_SOURCE", "")
 SCALING_MODE = os.getenv("SCALING_MODE", "fill")
 WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "true").lower() == "true"
+
+# "sun" resolves DAY/NIGHT from real sunrise/sunset; anything else is the
+# fixed DAY_START_HOUR/DAY_END_HOUR clock schedule.
+DAY_NIGHT_MODE = os.getenv("DAY_NIGHT_MODE", "clock").strip().lower()
 SCALE_TL = os.getenv("SCALE_TL", "500")
 SCALE_TR = os.getenv("SCALE_TR", "400")
 YOUTUBE_KEY = os.getenv("YOUTUBE_KEY", "")
@@ -336,6 +342,7 @@ def stop_broadcast():
         except OSError:
             pass
     log("Broadcast STOPPED by operator")
+    events.record("operator_stop", "Broadcast stopped from the WebUI", "warn")
     return True, "Broadcast stopped. It will stay stopped until you press Start."
 
 
@@ -348,6 +355,7 @@ def start_broadcast():
         except OSError:
             pass
     log("Broadcast STARTED by operator")
+    events.record("operator_start", "Broadcast started from the WebUI", "success")
     return True, ("Broadcast starting - the encoder comes up within a few seconds."
                   if existed else "Broadcast was already running.")
 
@@ -848,6 +856,7 @@ def build_status():
             "enabled": WATCHDOG_ENABLED,
             "state": watchdog_state,
         },
+        "day_night": day_night_info(),
         "preview": {**pstatus, "cpu_percent": cpu.get(pstatus.get("pid"))},
         "system": {
             "load": _loadavg(),
@@ -857,6 +866,46 @@ def build_status():
             "cpu_count": os.cpu_count(),
         },
     }
+
+
+_day_night_cache = {"at": 0.0, "data": None}
+_day_night_lock = threading.Lock()
+DAY_NIGHT_POLL_SECONDS = 60.0
+
+
+def day_night_info():
+    """Which sponsor set is airing, and why. Cached - the UI polls status often.
+
+    Mirrors start.sh's get_mode(): with DAY_NIGHT_MODE=sun the resolved mode is
+    read from sun_times.py (which caches the solar lookup per day and falls back
+    to the clock on any failure); otherwise it is the plain clock schedule.
+    """
+    global _day_night_cache
+    with _day_night_lock:
+        if _day_night_cache["data"] is not None and \
+                time.monotonic() - _day_night_cache["at"] < DAY_NIGHT_POLL_SECONDS:
+            return _day_night_cache["data"]
+        info = {"configured_mode": DAY_NIGHT_MODE}
+        try:
+            import sun_times
+            if DAY_NIGHT_MODE == "sun":
+                mode, source = sun_times.resolve_mode()
+                cache = sun_times._load_cache() or {}
+                info.update({
+                    "mode": mode,
+                    "source": source,          # "sun", or "clock" if the lookup failed
+                    "sunrise": cache.get("sunrise"),
+                    "sunset": cache.get("sunset"),
+                    "offset_minutes": sun_times.SUN_OFFSET_MINUTES,
+                })
+            else:
+                info.update({"mode": sun_times._clock_mode(), "source": "clock",
+                             "day_start_hour": sun_times.DAY_START_HOUR,
+                             "day_end_hour": sun_times.DAY_END_HOUR})
+        except Exception as e:                 # never break the status payload
+            info.update({"mode": None, "source": "unavailable", "error": str(e)[:120]})
+        _day_night_cache = {"at": time.monotonic(), "data": info}
+        return info
 
 
 def _loadavg():
@@ -871,6 +920,68 @@ def _count_music_files():
         return sum(1 for n in os.listdir(MUSIC_DIR) if n.lower().endswith(".mp3"))
     except OSError:
         return 0
+
+
+# ---------------------------------------------------------------- metrics
+# Encoder telemetry sampled on a fixed cadence, independent of how often a
+# browser happens to poll, so the trend is evenly spaced and survives a closed
+# tab. ~15 minutes of history at 5s resolution.
+METRICS_INTERVAL = 5.0
+METRICS_POINTS = 180
+
+
+class MetricsHistory:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.samples = []
+
+    @staticmethod
+    def _kbps(bitrate):
+        """FFmpeg reports e.g. '4300.2kbits/s'; 'N/A' while starting up."""
+        if not bitrate:
+            return None
+        m = re.match(r"\s*([0-9.]+)\s*([kM]?)bits/s", str(bitrate))
+        if not m:
+            return None
+        value = float(m.group(1))
+        return value * 1000 if m.group(2) == "M" else value
+
+    @staticmethod
+    def _num(value):
+        try:
+            return float(str(value).rstrip("x"))
+        except (TypeError, ValueError):
+            return None
+
+    def sample_once(self):
+        progress = parse_progress()
+        broadcasting = get_broadcast_pid() is not None
+        point = {"t": int(time.time())}
+        if progress and broadcasting:
+            point["bitrate"] = self._kbps(progress.get("bitrate"))
+            point["fps"] = self._num(progress.get("fps"))
+            point["speed"] = self._num(progress.get("speed"))
+        else:
+            point["bitrate"] = point["fps"] = point["speed"] = None
+        with self.lock:
+            self.samples.append(point)
+            if len(self.samples) > METRICS_POINTS:
+                del self.samples[:-METRICS_POINTS]
+
+    def history(self):
+        with self.lock:
+            return list(self.samples)
+
+    def run(self):
+        while True:
+            try:
+                self.sample_once()
+            except Exception:
+                pass
+            time.sleep(METRICS_INTERVAL)
+
+
+metrics = MetricsHistory()
 
 
 # YouTube broadcast info is polled on a slow timer of its own: /api/status is
@@ -1114,6 +1225,15 @@ class AdminHandler(BaseHTTPRequestHandler):
             self._serve_preview_stream()
         elif path == "/api/preview/snapshot":
             self._serve_preview_snapshot()
+        elif path == "/api/metrics/history":
+            self.send_json({"interval": METRICS_INTERVAL, "samples": metrics.history()})
+        elif path == "/api/events":
+            try:
+                limit = max(1, min(500, int((query.get("limit") or ["60"])[0])))
+            except ValueError:
+                limit = 60
+            import events
+            self.send_json({"events": events.read(limit)})
         elif path == "/api/youtube/broadcast":
             self.send_json(youtube_broadcast_info(force=True))
         elif path == "/api/layout":
@@ -1123,6 +1243,26 @@ class AdminHandler(BaseHTTPRequestHandler):
                 "labels": overlay_layout.SLOTS,
                 "weather_enabled": WEATHER_ENABLED,
             })
+        elif path == "/api/sponsors":
+            try:
+                days = max(1, min(365, int((query.get("days") or ["30"])[0])))
+            except ValueError:
+                days = 30
+            self.send_json(sponsors.report(days))
+        elif path == "/api/sponsors/report.csv":
+            try:
+                days = max(1, min(365, int((query.get("days") or ["30"])[0])))
+            except ValueError:
+                days = 30
+            body = sponsors.report_csv(days).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition",
+                             f'attachment; filename="sponsor-airtime-{time.strftime("%Y%m%d")}.csv"')
+            self.send_header("Content-Length", str(len(body)))
+            self._security_headers()
+            self.end_headers()
+            self.wfile.write(body)
         elif path == "/api/ads":
             self.send_json({"ads": list_ads(), "slots": AD_SLOTS, "modes": AD_MODES})
         elif path == "/api/ads/image":
@@ -1337,6 +1477,8 @@ class AdminHandler(BaseHTTPRequestHandler):
             saved = overlay_layout.save(overlay_layout.defaults())
             preview.stop()
             self.send_json({"ok": True, "message": "layout reset to defaults", "overlays": saved})
+        elif path == "/api/sponsors/schedule":
+            self._handle_sponsor_schedule()
         elif path == "/api/ads/upload":
             self._handle_ad_upload()
         elif path == "/api/ads/delete":
@@ -1364,12 +1506,36 @@ class AdminHandler(BaseHTTPRequestHandler):
                 return
             applied = yt.set_privacy(broadcast["id"], privacy)
             log(f"Broadcast visibility set to {applied}")
+            events.record("visibility", f"Visibility set to {applied} from the WebUI")
             _youtube_cache["at"] = 0          # force the next poll to re-read
             self.send_json({"ok": True, "privacy": applied,
                             "message": f"Visibility set to {applied}."})
         except youtube_api.YouTubeError as e:
             self.send_json({"ok": False, "kind": e.kind, "message": e.message},
                            501 if e.kind == "not_configured" else 502)
+
+    def _handle_sponsor_schedule(self):
+        body = self._read_body(limit=8192)
+        try:
+            payload = json.loads(body or b"{}")
+        except ValueError:
+            self.send_json({"error": "invalid JSON"}, 400)
+            return
+        try:
+            entry = sponsors.set_entry(
+                payload.get("slot", ""), payload.get("mode", ""), payload.get("name", ""),
+                enabled=payload.get("enabled"), start=payload.get("start"),
+                end=payload.get("end"), note=payload.get("note"))
+        except ValueError as e:
+            self.send_json({"error": str(e)}, 400)
+            return
+        name = os.path.basename(payload.get("name", ""))
+        log(f"Sponsor schedule updated: {payload.get('slot')}/{payload.get('mode')}/{name} -> {entry}")
+        events.record("sponsor", f"Schedule updated for {name}: "
+                                 f"{'enabled' if entry['enabled'] else 'disabled'}"
+                                 f"{', from ' + entry['start'] if entry['start'] else ''}"
+                                 f"{', until ' + entry['end'] if entry['end'] else ''}")
+        self.send_json({"ok": True, "entry": entry, "report": sponsors.report()})
 
     def _handle_layout_save(self, query):
         body = self._read_body(limit=16384)
@@ -1449,6 +1615,11 @@ class AdminHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "file not found"}, 404)
             return
         os.remove(path)
+        try:
+            sponsors.forget(payload.get("slot", ""), payload.get("mode", ""),
+                            os.path.basename(path))
+        except Exception:
+            pass
         log(f"Ad deleted: {path}")
         self.send_json({"ok": True, "message": f"deleted {os.path.basename(path)}",
                         "ads": list_ads()})
@@ -1469,6 +1640,7 @@ def main():
         return
 
     signal.signal(signal.SIGTERM, _handle_sigterm)
+    threading.Thread(target=metrics.run, daemon=True, name="metrics").start()
     os.makedirs(PREVIEW_DIR, exist_ok=True)
     # Clear stale frames from a previous run
     try:

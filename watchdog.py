@@ -57,6 +57,15 @@ YOUTUBE_CLIENT_ID = os.getenv("YOUTUBE_CLIENT_ID", "")
 YOUTUBE_CLIENT_SECRET = os.getenv("YOUTUBE_CLIENT_SECRET", "")
 YOUTUBE_REFRESH_TOKEN = os.getenv("YOUTUBE_REFRESH_TOKEN", "")
 
+# Automatic visibility management: hide the broadcast from the public while it
+# is showing the "We'll Be Right Back" screen, restore it once healthy again.
+AUTO_VISIBILITY_ENABLED = os.getenv("AUTO_VISIBILITY_ENABLED", "false").lower() == "true"
+OUTAGE_VISIBILITY = os.getenv("OUTAGE_VISIBILITY", "unlisted").lower()
+HEALTHY_VISIBILITY = os.getenv("HEALTHY_VISIBILITY", "public").lower()
+# Grace periods stop a brief camera blip from flapping the channel's visibility
+OUTAGE_GRACE_SECONDS = int(os.getenv("OUTAGE_GRACE_SECONDS", "120"))
+RECOVERY_GRACE_SECONDS = int(os.getenv("RECOVERY_GRACE_SECONDS", "120"))
+
 # Discord notification settings
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 DISCORD_USER_ID = os.getenv("DISCORD_USER_ID", "")  # For @mention alerts
@@ -438,6 +447,15 @@ class WatchdogState:
         self.save()
 
 state = WatchdogState()
+
+
+def record_event(event_type, message, level="info"):
+    """Best-effort append to the shared event timeline."""
+    try:
+        import events
+        events.record(event_type, message, level)
+    except Exception:
+        pass
 
 # ==============================================================================
 #  YOUTUBE API FUNCTIONS
@@ -1054,6 +1072,82 @@ def validate_discord_webhook():
 #  MAIN WATCHDOG LOOP
 # ==============================================================================
 
+class VisibilityManager:
+    """Keeps the broadcast's YouTube visibility in step with stream health.
+
+    Nobody wants viewers arriving from search at a "technical difficulties"
+    card. While the BRB screen has been up longer than the grace period the
+    broadcast is moved to OUTAGE_VISIBILITY, and once the real camera feed has
+    been back for the recovery grace period it is restored.
+    """
+
+    def __init__(self):
+        self.enabled = AUTO_VISIBILITY_ENABLED
+        self.state = "healthy"          # or "outage"
+        self.since = time.time()
+        self.restore_to = None          # visibility observed before the outage
+        self.last_error_log = 0
+
+    def _client(self):
+        import youtube_api
+        return youtube_api.client()
+
+    def _apply(self, target, reason):
+        import youtube_api
+        try:
+            yt = self._client()
+            broadcast = yt.get_active_broadcast()
+            if not broadcast:
+                return False
+            if broadcast["privacy"] == target:
+                return True
+            yt.set_privacy(broadcast["id"], target)
+            logger.info(f"Visibility: {broadcast['privacy']} -> {target} ({reason})")
+            record_event("visibility", f"Visibility {broadcast['privacy']} -> {target} ({reason})", "info")
+            send_discord_alert("Broadcast visibility changed",
+                               f"**{broadcast['title']}**\n\n`{broadcast['privacy']}` -> `{target}`\n{reason}",
+                               color=16776960, mention_user=False)
+            return True
+        except youtube_api.YouTubeError as e:
+            # Log at most once a minute - a missing token should not spam
+            if time.time() - self.last_error_log > 60:
+                logger.warning(f"Visibility change failed: {e.message}")
+                self.last_error_log = time.time()
+            return False
+
+    def _observe_current(self):
+        import youtube_api
+        try:
+            b = self._client().get_active_broadcast()
+            return b["privacy"] if b else None
+        except youtube_api.YouTubeError:
+            return None
+
+    def update(self, in_outage):
+        """Call once per watchdog cycle with the current health verdict."""
+        if not self.enabled:
+            return
+        now = time.time()
+        desired_state = "outage" if in_outage else "healthy"
+        if desired_state != self.state:
+            self.state = desired_state
+            self.since = now
+            return                       # start the grace timer, act later
+        held = now - self.since
+        if self.state == "outage" and held >= OUTAGE_GRACE_SECONDS:
+            if self.restore_to is None:
+                current = self._observe_current()
+                # Never "restore" to the outage value itself
+                self.restore_to = current if current and current != OUTAGE_VISIBILITY else HEALTHY_VISIBILITY
+            if self._apply(OUTAGE_VISIBILITY, f"stream unhealthy for {int(held)}s"):
+                self.since = now + 10**6     # applied - do not repeat until state flips
+        elif self.state == "healthy" and held >= RECOVERY_GRACE_SECONDS and self.restore_to:
+            target = self.restore_to
+            if self._apply(target, f"stream healthy for {int(held)}s"):
+                self.restore_to = None
+                self.since = now + 10**6
+
+
 def run_watchdog():
     """Main watchdog loop"""
     if not WATCHDOG_ENABLED:
@@ -1100,6 +1194,12 @@ def run_watchdog():
     logger.info(f"Waiting {STARTUP_DELAY} seconds for initial stream startup...")
     time.sleep(STARTUP_DELAY)
 
+    visibility = VisibilityManager()
+    if visibility.enabled:
+        logger.info(f"Auto-visibility: {OUTAGE_VISIBILITY} during outages, "
+                    f"{HEALTHY_VISIBILITY} when healthy "
+                    f"(grace {OUTAGE_GRACE_SECONDS}s/{RECOVERY_GRACE_SECONDS}s)")
+
     consecutive_offline = 0
     consecutive_live = 0
     last_public_check = datetime.now() - timedelta(hours=1)  # Force initial check
@@ -1114,6 +1214,10 @@ def run_watchdog():
                 continue
 
             status = check_stream_status()
+
+            # A broadcast is "unhealthy" for visibility purposes when the BRB
+            # screen is up, or the status endpoint says offline.
+            visibility.update(in_outage=(is_fallback_mode() or status == 'offline'))
 
             if status == 'live':
                 # Stream is healthy

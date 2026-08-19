@@ -20,7 +20,10 @@
     - RTSP source health checks before recovery&#xD;
     - Auto-set stream to PUBLIC after recovery&#xD;
     &#xD;
-    v2.8.2: Added PUID/PGID support for proper file ownership!</Overview>
+    - Admin WebUI (port 9999) with live stream preview and broadcast controls&#xD;
+    - Simulcast to Facebook / Twitch alongside YouTube&#xD;
+    &#xD;
+    v2.11.0: Sunrise/sunset sponsor switching, sponsor scheduling and airtime reports, event timeline, bitrate sparklines, simulcast, and automatic unlisting during outages.</Overview>
   <Category>MediaApp:Video MediaServer:Video</Category>
   <WebUI>http://[IP]:[PORT:9999]/</WebUI>
   <TemplateURL/>
@@ -104,6 +107,20 @@
   <Config Name="Day Start Hour" Target="DAY_START_HOUR" Default="6" Mode="" Description="Hour (0-23) when Day mode begins" Type="Variable" Display="advanced" Required="false" Mask="false">6</Config>
   <Config Name="Day End Hour" Target="DAY_END_HOUR" Default="20" Mode="" Description="Hour (0-23) when Night mode begins" Type="Variable" Display="advanced" Required="false" Mask="false">20</Config>
 
+  <!-- Day/Night Switching -->
+  <Config Name="Day/Night Mode" Target="DAY_NIGHT_MODE" Default="clock" Mode="" Description="'sun' follows real sunrise/sunset for your Weather Lat/Lon (recommended); 'clock' uses the fixed Day Start/End Hour. Falls back to the clock automatically if the solar lookup fails." Type="Variable" Display="advanced" Required="false" Mask="false">clock</Config>
+  <Config Name="Sun Offset Minutes" Target="SUN_OFFSET_MINUTES" Default="0" Mode="" Description="Only used when Day/Night Mode = sun. Positive switches that many minutes after sunrise and before sunset (cameras go dark before astronomical sunset); negative widens the day." Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
+
+  <!-- Simulcast -->
+  <Config Name="Simulcast URLs" Target="SIMULCAST_URLS" Default="" Mode="" Description="Optional. Comma-separated extra RTMP destinations, each a COMPLETE url including its own key (e.g. rtmp://live-api-s.facebook.com:80/rtmp/KEY). A failing destination can never take the YouTube stream down with it." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+
+  <!-- Automatic Visibility (requires the YouTube API credentials above) -->
+  <Config Name="Auto Visibility" Target="AUTO_VISIBILITY_ENABLED" Default="false" Mode="" Description="Hide the broadcast while the 'We'll Be Right Back' screen is up, then restore it on recovery. Requires the YouTube API credentials." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Outage Visibility" Target="OUTAGE_VISIBILITY" Default="unlisted" Mode="" Description="Visibility applied during an outage (public|unlisted|private)" Type="Variable" Display="advanced" Required="false" Mask="false">unlisted</Config>
+  <Config Name="Healthy Visibility" Target="HEALTHY_VISIBILITY" Default="public" Mode="" Description="Fallback restore target if the pre-outage visibility cannot be read" Type="Variable" Display="advanced" Required="false" Mask="false">public</Config>
+  <Config Name="Outage Grace Seconds" Target="OUTAGE_GRACE_SECONDS" Default="120" Mode="" Description="How long the outage must persist before the broadcast is hidden" Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
+  <Config Name="Recovery Grace Seconds" Target="RECOVERY_GRACE_SECONDS" Default="120" Mode="" Description="How long the stream must stay healthy before visibility is restored" Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
+
   <!-- Audio API -->
   <Config Name="Audio API Key" Target="AUDIO_API_KEY" Default="" Mode="" Description="API key to secure the audio mute/unmute endpoint" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
 
@@ -120,6 +137,8 @@
   <Config Name="Preview Width" Target="PREVIEW_WIDTH" Default="960" Mode="" Description="Preview image width in pixels" Type="Variable" Display="advanced" Required="false" Mask="false">960</Config>
   <Config Name="Preview Idle Timeout" Target="PREVIEW_IDLE_TIMEOUT" Default="120" Mode="" Description="Seconds without viewers before the preview auto-stops to save CPU" Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
   <Config Name="Preview Low CPU Mode" Target="PREVIEW_LOW_CPU" Default="false" Mode="" Description="Decode keyframes only for the preview (choppier but much less CPU)" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Preview Quality" Target="PREVIEW_QUALITY" Default="6" Mode="" Description="MJPEG preview quality (2 = best, 31 = worst)" Type="Variable" Display="advanced" Required="false" Mask="false">6</Config>
+  <Config Name="Admin WebUI Port (env)" Target="ADMIN_PORT" Default="9999" Mode="" Description="Port the admin dashboard listens on inside the container - change the port mapping below to match" Type="Variable" Display="advanced" Required="false" Mask="false">9999</Config>
 
   <!-- Ports -->
   <Config Name="RTSP Port" Target="8554" Default="8554" Mode="tcp" Description="RTSP output port (only if ENABLE_LOCAL_STREAM=true)" Type="Port" Display="always" Required="false" Mask="false">8554</Config>

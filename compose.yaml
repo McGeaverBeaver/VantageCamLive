@@ -53,6 +53,26 @@ services:
       - WEATHER_TIMEZONE=America/New_York
       - CAMERA_HEADING=E
 
+      # --- DAY / NIGHT SPONSOR SWITCHING ---
+      # "sun" follows real sunrise/sunset for WEATHER_LAT/LON (recommended);
+      # "clock" keeps the fixed DAY_START_HOUR/DAY_END_HOUR schedule.
+      - DAY_NIGHT_MODE=sun
+      # - SUN_OFFSET_MINUTES=0   # +30 switches 30 min after sunrise / before sunset
+
+      # --- SIMULCAST (optional) ---
+      # Comma-separated extra RTMP destinations, each a COMPLETE url including
+      # its own key. A failing destination can never take YouTube down with it.
+      # - SIMULCAST_URLS=rtmp://live-api-s.facebook.com:80/rtmp/FB-KEY,rtmp://ingest.twitch.tv/app/TW-KEY
+
+      # --- AUTOMATIC VISIBILITY (optional, needs the YouTube API creds below) ---
+      # Hide the broadcast while the "We'll Be Right Back" screen is up so
+      # viewers arriving from search never land on a technical-difficulties card.
+      # - AUTO_VISIBILITY_ENABLED=true
+      # - OUTAGE_VISIBILITY=unlisted
+      # - HEALTHY_VISIBILITY=public
+      # - OUTAGE_GRACE_SECONDS=120     # how long the outage must persist first
+      # - RECOVERY_GRACE_SECONDS=120   # how long health must hold before restoring
+
       # --- ALERT REFRESH RATE ---
       # How often to check Env-Canada & OpenMeteo for new data (in seconds).
       # Default: 900 (15 Minutes)

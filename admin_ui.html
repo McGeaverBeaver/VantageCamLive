@@ -94,6 +94,55 @@
     border-radius: 6px; padding: 5px 8px; font-size: 13px;
   }
 
+  /* stat tiles: label / value / trend sparkline */
+  .tiles { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin-bottom: 16px; }
+  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+  .tile .lbl { color: var(--muted); font-size: 11.5px; }
+  .tile .val { font-size: 21px; font-weight: 600; line-height: 1.25; }
+  .tile .val .unit { font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 3px; }
+  .tile svg { display: block; width: 100%; height: 34px; margin-top: 6px; overflow: visible; }
+  .tile .spark-line { fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .tile .spark-recent { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .tile .spark-dot { fill: var(--accent); }
+  .tile .spark-empty { fill: var(--muted); font-size: 10px; }
+  .tile .hit { fill: transparent; cursor: crosshair; }
+  .tile .cursor { stroke: var(--border); stroke-width: 1; display: none; }
+
+  /* events timeline */
+  .events { display: flex; flex-direction: column; gap: 1px; }
+  .ev { display: flex; gap: 10px; align-items: baseline; padding: 5px 2px; border-bottom: 1px solid rgba(255,255,255,.04); font-size: 12.5px; }
+  .ev:last-child { border-bottom: none; }
+  .ev .ev-t { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ev .ev-tag { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 3px; white-space: nowrap;
+                background: var(--border); color: var(--muted); }
+  .ev.info .ev-tag { background: rgba(88,166,255,.16); color: var(--accent); }
+  .ev.success .ev-tag { background: rgba(63,185,80,.16); color: var(--green); }
+  .ev.warn .ev-tag { background: rgba(210,153,34,.16); color: var(--orange); }
+  .ev.error .ev-tag { background: rgba(248,81,73,.16); color: var(--red); }
+  .ev .ev-msg { word-break: break-word; }
+
+  /* sponsor schedule rows */
+  .daynight { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
+              padding: 10px 12px; background: var(--panel2); border: 1px solid var(--border);
+              border-radius: 8px; font-size: 12.5px; }
+  .daynight .dn-mode { font-weight: 700; letter-spacing: .04em; }
+  .daynight.day  .dn-mode { color: var(--orange); }
+  .daynight.night .dn-mode { color: var(--blue, #58a6ff); }
+  .sp-row { display: grid; gap: 10px; align-items: center; padding: 10px 12px; background: var(--panel2);
+            border: 1px solid var(--border); border-radius: 7px; margin-bottom: 8px;
+            grid-template-columns: 64px minmax(140px,1.4fr) auto auto auto minmax(120px,1fr) auto; }
+  @media (max-width: 1000px) { .sp-row { grid-template-columns: 56px 1fr; } .sp-row .sp-wide { grid-column: 1 / -1; } }
+  .sp-row img { width: 60px; height: 42px; object-fit: contain; border-radius: 4px;
+                background: repeating-conic-gradient(#222 0% 25%, #333 0% 50%) 0 0/12px 12px; }
+  .sp-row .sp-name { font-weight: 600; font-size: 12.5px; word-break: break-all; }
+  .sp-row .sp-sub { color: var(--muted); font-size: 11px; }
+  .sp-row input[type=date] { background: var(--bg); color: var(--text); border: 1px solid var(--border);
+                             border-radius: 4px; padding: 3px 6px; font-size: 11.5px; }
+  .sp-row .sp-stat { text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .badge { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+  .badge.on { background: rgba(63,185,80,.16); color: var(--green); }
+  .badge.off { background: rgba(139,148,158,.16); color: var(--muted); }
+
   /* dashboard top row: preview beside broadcast control */
   .dash-top { display: grid; gap: 16px; grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr);
               align-items: start; margin-bottom: 16px; }
@@ -227,6 +276,7 @@
   <div class="nav-sep">Production</div>
   <button class="nav-item" data-view="layout"><span class="ico">&#128207;</span> Overlay Layout</button>
   <button class="nav-item" data-view="sponsors"><span class="ico">&#128226;</span> Sponsors</button>
+  <button class="nav-item" data-view="schedule"><span class="ico">&#128197;</span> Schedule &amp; Airtime</button>
   <button class="nav-item" data-view="weather"><span class="ico">&#127780;</span> Weather &amp; Alerts</button>
   <button class="nav-item" data-view="audio"><span class="ico">&#128266;</span> Audio</button>
   <div class="nav-sep">System</div>
@@ -295,6 +345,8 @@
       </div>
     </div>
 
+    <div class="tiles" id="statTiles"></div>
+
     <div class="grid">
       <div class="panel"><div class="panel-head"><h2>&#128247; Camera</h2></div>
         <div class="panel-body"><table class="kv" id="tblCamera"></table></div></div>
@@ -302,6 +354,15 @@
         <div class="panel-body"><table class="kv" id="tblWatchdog"></table></div></div>
       <div class="panel"><div class="panel-head"><h2>&#128421; System</h2></div>
         <div class="panel-body"><table class="kv" id="tblSystem"></table></div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>&#128220; Recent Events</h2>
+        <span class="muted">what the stream has been doing</span>
+        <span class="spacer"></span>
+        <button id="btnEventsRefresh">&#8635;</button></div>
+      <div class="panel-body"><div class="events" id="eventList">
+        <span class="muted">No events recorded yet.</span></div></div>
     </div>
   </section>
 
@@ -351,6 +412,33 @@
           <button id="btnAdUpload" class="primary">&#8679; Upload to <span id="uploadTargetLabel">TL &middot; Day</span></button>
           <span class="muted">PNG / JPG / WebP &middot; max 15&nbsp;MB &middot; picked up on next rotation</span>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SPONSOR SCHEDULE + REPORT ============ -->
+  <section class="view" id="view-schedule">
+    <div class="view-head"><h1>Sponsor Schedule &amp; Airtime</h1>
+      <p>Give each logo a run window, and see exactly how much airtime it got.</p></div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>&#128197; Run windows &amp; airtime</h2>
+        <span class="spacer"></span>
+        <label class="muted">airtime window
+          <select id="reportDays">
+            <option value="7">7 days</option><option value="30" selected>30 days</option>
+            <option value="90">90 days</option></select></label>
+        <button id="btnSponsorRefresh">&#8635; Refresh</button>
+        <a id="csvLink" href="/api/sponsors/report.csv?days=30" download><button>&#11015; CSV</button></a>
+      </div>
+      <div class="panel-body">
+        <div id="dayNight" class="daynight"></div>
+        <div id="scheduleRows"><span class="muted">Loading…</span></div>
+        <p class="muted" style="margin-top:10px">
+          Leave a date blank for "no limit". A logo outside its window, or switched off, is skipped by the
+          rotation entirely &mdash; the file stays on disk so next season you just change the dates.
+          Airtime is counted per rotation slot as it airs.
+        </p>
       </div>
     </div>
   </section>
@@ -459,7 +547,7 @@ function esc(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&
 function kv(rows) { return rows.map(([k,v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join(""); }
 
 // ---------- navigation ----------
-const VIEWS = ["dashboard","layout","sponsors","weather","audio","diagnostics","logs","settings"];
+const VIEWS = ["dashboard","layout","sponsors","schedule","weather","audio","diagnostics","logs","settings"];
 function showView(name) {
   if (!VIEWS.includes(name)) name = "dashboard";
   VIEWS.forEach(v => $("view-"+v).classList.toggle("active", v === name));
@@ -477,6 +565,7 @@ function lazyLoad(name) {
   }
   loaded[name] = true;
   if (name === "sponsors") loadAds();
+  else if (name === "schedule") loadSchedule();
   else if (name === "weather") loadOverlays();
   else if (name === "logs") loadLog();
   else if (name === "settings") loadConfig();
@@ -499,6 +588,7 @@ async function refreshStatus() {
 
 function renderStatus(s) {
   const st = s.stream, cam = s.camera, aud = s.audio, wd = s.watchdog, sys = s.system, pv = s.preview;
+  renderDayNight(s.day_night);
 
   const pillStream = $("pillStream");
   if (st.paused) {
@@ -946,10 +1036,208 @@ async function loadConfig() {
   } catch (e) {}
 }
 
+
+// ---------- stat tiles with trend sparklines ----------
+// One tile per measure on its own scale - never a shared axis, which would
+// make 4300 kbps and 30 fps meaningless against each other.
+const TILE_SPECS = [
+  { key: "bitrate", label: "Bitrate",     unit: "kbps", fmt: v => Math.round(v).toLocaleString() },
+  { key: "fps",     label: "Frames/sec",  unit: "",     fmt: v => v.toFixed(1) },
+  { key: "speed",   label: "Encode speed",unit: "x",    fmt: v => v.toFixed(2) },
+];
+let metricSamples = [];
+
+async function loadMetrics() {
+  try { metricSamples = (await api("/api/metrics/history")).samples || []; renderTiles(); }
+  catch (e) { /* transient */ }
+}
+
+function sparkPath(values, w, h, pad) {
+  const finite = values.filter(v => v != null);
+  if (finite.length < 2) return null;
+  let lo = Math.min(...finite), hi = Math.max(...finite);
+  if (hi - lo < 1e-9) { lo -= 1; hi += 1; }          // flat line sits mid-box
+  const n = values.length;
+  const x = i => (n === 1 ? w / 2 : (i / (n - 1)) * w);
+  const y = v => pad + (1 - (v - lo) / (hi - lo)) * (h - 2 * pad);
+  const segs = []; let cur = [];
+  values.forEach((v, i) => {
+    if (v == null) { if (cur.length > 1) segs.push(cur); cur = []; }
+    else cur.push([x(i), y(v)]);
+  });
+  if (cur.length > 1) segs.push(cur);
+  const d = segs.map(sg => "M" + sg.map(pt => pt[0].toFixed(1) + "," + pt[1].toFixed(1)).join("L")).join(" ");
+  const last = segs.length ? segs[segs.length - 1] : null;
+  return { d, last, lo, hi, x, y };
+}
+
+function renderTiles() {
+  const el = $("statTiles");
+  if (!metricSamples.length) { el.innerHTML = ""; return; }
+  const W = 100, H = 30, PAD = 3, RECENT = 6;   // viewBox units; CSS scales it
+  el.innerHTML = TILE_SPECS.map(spec => {
+    const vals = metricSamples.map(p => p[spec.key]);
+    const latest = [...vals].reverse().find(v => v != null);
+    const sp = sparkPath(vals, W, H, PAD);
+    let svg;
+    if (!sp) {
+      svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+               <text class="spark-empty" x="0" y="${H/2+3}">no data yet</text></svg>`;
+    } else {
+      // Body in the de-emphasis hue, the most recent stretch in the accent so
+      // the eye lands on "now" without a second colour entering the palette.
+      const tailPts = sp.last ? sp.last.slice(-RECENT) : [];
+      const tail = tailPts.length > 1
+        ? "M" + tailPts.map(pt => pt[0].toFixed(1) + "," + pt[1].toFixed(1)).join("L") : "";
+      const end = tailPts.length ? tailPts[tailPts.length - 1] : null;
+      svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+                  role="img" aria-label="${esc(spec.label)} trend, latest ${latest != null ? spec.fmt(latest) : "unknown"}">
+          <path class="spark-line" d="${sp.d}"/>
+          ${tail ? `<path class="spark-recent" d="${tail}"/>` : ""}
+          ${end ? `<circle class="spark-dot" cx="${end[0].toFixed(1)}" cy="${end[1].toFixed(1)}" r="1.8"/>` : ""}
+          <line class="cursor" y1="0" y2="${H}"/>
+          <rect class="hit" x="0" y="0" width="${W}" height="${H}"/>
+        </svg>`;
+    }
+    return `<div class="tile" data-key="${spec.key}">
+      <div class="lbl">${esc(spec.label)}</div>
+      <div class="val">${latest != null ? esc(spec.fmt(latest)) : "&mdash;"}${
+        latest != null && spec.unit ? `<span class="unit">${esc(spec.unit)}</span>` : ""}</div>
+      ${svg}</div>`;
+  }).join("");
+  wireSparkHover();
+}
+
+// Hover crosshair + tooltip: an SVG chart should be inspectable, not decorative
+function wireSparkHover() {
+  document.querySelectorAll(".tile").forEach(tile => {
+    const svg = tile.querySelector("svg"), hit = tile.querySelector(".hit");
+    if (!hit) return;
+    const spec = TILE_SPECS.find(t => t.key === tile.dataset.key);
+    const valEl = tile.querySelector(".val");
+    const original = valEl.innerHTML;
+    const cursor = svg.querySelector(".cursor");
+    hit.addEventListener("pointermove", ev => {
+      const r = svg.getBoundingClientRect();
+      const frac = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+      const i = Math.round(frac * (metricSamples.length - 1));
+      const p = metricSamples[i];
+      if (!p) return;
+      cursor.style.display = "block";
+      cursor.setAttribute("x1", (frac * 100).toFixed(1));
+      cursor.setAttribute("x2", (frac * 100).toFixed(1));
+      const v = p[spec.key];
+      const when = new Date(p.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      valEl.innerHTML = (v != null ? esc(spec.fmt(v)) : "&mdash;") +
+        (v != null && spec.unit ? `<span class="unit">${esc(spec.unit)}</span>` : "") +
+        `<span class="unit">@ ${esc(when)}</span>`;
+    });
+    hit.addEventListener("pointerleave", () => {
+      cursor.style.display = "none"; valEl.innerHTML = original;
+    });
+  });
+}
+
+// ---------- events timeline ----------
+function evTime(ts) {
+  const d = new Date(ts * 1000), now = Date.now() / 1000;
+  const opts = { hour: "2-digit", minute: "2-digit" };
+  return (now - ts > 86400 ? d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " : "")
+         + d.toLocaleTimeString([], opts);
+}
+async function loadEvents() {
+  try {
+    const r = await api("/api/events?limit=40");
+    const list = r.events || [];
+    $("eventList").innerHTML = list.length ? list.map(e =>
+      `<div class="ev ${esc(e.level || "info")}">
+         <span class="ev-t">${esc(evTime(e.ts))}</span>
+         <span class="ev-tag">${esc((e.type || "").replace(/_/g, " "))}</span>
+         <span class="ev-msg">${esc(e.msg || "")}</span>
+       </div>`).join("") : '<span class="muted">No events recorded yet.</span>';
+  } catch (e) { /* transient */ }
+}
+$("btnEventsRefresh").addEventListener("click", loadEvents);
+
+// ---------- day / night ----------
+function renderDayNight(dn) {
+  const el = $("dayNight");
+  if (!el || !dn) return;
+  const mode = dn.mode || "?";
+  el.className = "daynight " + (mode === "DAY" ? "day" : mode === "NIGHT" ? "night" : "");
+  const bits = [];
+  if (dn.source === "sun") {
+    const t = v => { try { return new Date(v).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+                     catch (e) { return "?"; } };
+    if (dn.sunrise && dn.sunset) bits.push("sunrise " + t(dn.sunrise) + " · sunset " + t(dn.sunset));
+    if (dn.offset_minutes) bits.push((dn.offset_minutes > 0 ? "+" : "") + dn.offset_minutes + " min offset");
+  } else if (dn.source === "clock") {
+    bits.push(dn.configured_mode === "sun"
+      ? "solar lookup unavailable — using the clock schedule"
+      : "clock schedule " + dn.day_start_hour + ":00–" + dn.day_end_hour + ":00");
+  }
+  el.innerHTML = '<span class="dn-mode">' + esc(mode) + '</span>'
+    + '<span class="muted">sponsors are airing now</span>'
+    + (bits.length ? '<span class="spacer"></span><span class="muted">' + esc(bits.join(" · ")) + "</span>" : "");
+}
+
+// ---------- sponsor schedule & airtime ----------
+async function loadSchedule() {
+  const days = $("reportDays").value;
+  $("csvLink").href = "/api/sponsors/report.csv?days=" + days;
+  try {
+    const r = await api("/api/sponsors?days=" + days);
+    renderSchedule(r);
+  } catch (e) { $("scheduleRows").innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+}
+function renderSchedule(r) {
+  if (!r.rows.length) {
+    $("scheduleRows").innerHTML = '<span class="muted">No sponsor logos uploaded yet — add some on the Sponsors page.</span>';
+    return;
+  }
+  $("scheduleRows").innerHTML = r.rows.map(row => `
+    <div class="sp-row" data-slot="${esc(row.slot)}" data-mode="${esc(row.mode)}" data-name="${esc(row.name)}">
+      <img src="/api/ads/image?slot=${esc(row.slot)}&mode=${esc(row.mode)}&name=${encodeURIComponent(row.name)}"
+           onerror="this.style.visibility='hidden'">
+      <div class="sp-wide">
+        <div class="sp-name">${esc(row.name)}</div>
+        <div class="sp-sub">${row.slot === "topleft" ? "Top-left" : "Top-right"} · ${esc(row.mode)}
+          · <span class="badge ${row.live ? "on" : "off"}">${esc(row.status)}</span></div>
+      </div>
+      <label class="sp-sub">from<br><input type="date" data-f="start" value="${esc(row.start || "")}"></label>
+      <label class="sp-sub">until<br><input type="date" data-f="end" value="${esc(row.end || "")}"></label>
+      <label class="sp-sub"><input type="checkbox" data-f="enabled" ${row.enabled ? "checked" : ""}> on</label>
+      <div class="sp-stat">
+        <div><b>${row.impressions.toLocaleString()}</b> <span class="sp-sub">airings</span></div>
+        <div class="sp-sub">${esc(row.airtime)} total · ${esc(row.airtime_window)} in ${r.days}d</div>
+      </div>
+      <div class="sp-sub">${row.last_shown ? "last " + esc(evTime(row.last_shown)) : "never aired"}</div>
+    </div>`).join("");
+
+  $("scheduleRows").querySelectorAll("input").forEach(inp =>
+    inp.addEventListener("change", async () => {
+      const rowEl = inp.closest(".sp-row");
+      const body = { slot: rowEl.dataset.slot, mode: rowEl.dataset.mode, name: rowEl.dataset.name };
+      const f = inp.dataset.f;
+      body[f] = f === "enabled" ? inp.checked : inp.value;
+      try {
+        const res = await api("/api/sponsors/schedule", { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        toast(`Updated ${rowEl.dataset.name}`);
+        renderSchedule(res.report);
+      } catch (e) { toast(e.message, true); }
+    }));
+}
+$("btnSponsorRefresh").addEventListener("click", loadSchedule);
+$("reportDays").addEventListener("change", loadSchedule);
+
 // ---------- boot ----------
 showView(location.hash.slice(1) || "dashboard");
 refreshStatus();
+loadMetrics();
+loadEvents();
 setInterval(refreshStatus, 3000);
+setInterval(() => { if ($("view-dashboard").classList.contains("active")) { loadMetrics(); loadEvents(); } }, 10000);
 setInterval(() => { if ($("view-weather").classList.contains("active")) loadOverlays(); }, 60000);
 </script>
 </body>

@@ -1,4 +1,4 @@
-# VantageCam Live v2.10.0
+# VantageCam Live v2.11.0
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker Build](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml/badge.svg)](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml)
@@ -20,7 +20,7 @@ Transform a standard security camera feed into a professional broadcast without 
 ## 📋 Table of Contents
 
 - [Key Features](#-key-features)
-- [What's New in v2.10.0](#-whats-new-in-v2100)
+- [What's New in v2.11.0](#-whats-new-in-v2110)
 - [Admin WebUI & Stream Preview](#-admin-webui--stream-preview)
 - [Stream Won't Start?](#-stream-wont-start)
 - [Getting Started](#-getting-started)
@@ -58,6 +58,14 @@ Transform a standard security camera feed into a professional broadcast without 
 - **Dynamic Sponsors** — Drag-and-drop logos with automatic Day/Night rotation
 - **Audio Control API** — Remote mute/unmute/music via HTTP endpoints
 - **Music Streaming** — Play background music from MP3 playlist instead of camera audio
+- **Simulcast** — Push the same encode to Facebook/Twitch/anything RTMP alongside YouTube
+
+### Broadcast Operations *(v2.10+)*
+- **Admin WebUI** — One-page dashboard with live preview, start/stop, and visibility control
+- **Solar Day/Night** — Sponsor rotation follows real sunrise/sunset, not a fixed clock
+- **Auto-Unlist on Outage** — Hide the broadcast while the BRB screen is up, restore it on recovery
+- **Sponsor Scheduling & Reporting** — Run-date windows per logo, impression/airtime totals, CSV export
+- **Event Timeline & Sparklines** — See *when* things happened and how bitrate/FPS behaved
 
 ### Reliability *(v2.8+)*
 - **Self-Healing Watchdog** — Auto-detects failures and recovers streams
@@ -67,6 +75,67 @@ Transform a standard security camera feed into a professional broadcast without 
 - **Exponential Backoff** — Smart retry delays prevent hammering YouTube
 - **Auto-PUBLIC** — Restores stream visibility after recovery via YouTube API
 - **Discord Alerts** — Instant notifications for offline/recovery/errors
+
+---
+
+## 🚀 What's New in v2.11.0
+
+### 🌅 Sunrise/Sunset Day–Night Switching
+A fixed `DAY_END_HOUR=20` is an hour early in June and three hours late in December.
+Set `DAY_NIGHT_MODE=sun` and sponsor rotation follows **real solar times** for your
+`WEATHER_LAT`/`WEATHER_LON` instead:
+
+- Times come from Open-Meteo (no API key — same source as the weather overlay) and are
+  cached per day, so it's **one HTTP call every 24 hours**.
+- `SUN_OFFSET_MINUTES=30` switches 30 minutes *after* sunrise and *before* sunset — cameras
+  usually go unusably dark before astronomical sunset.
+- Any failure (no network, bad coordinates, polar latitudes) **falls back to the clock
+  schedule**, so the overlays can never get stuck in the wrong mode.
+- **Admin WebUI → Schedule & Airtime** shows which set is airing right now, today's
+  sunrise/sunset, and says so plainly when it had to fall back to the clock.
+
+### 🙈 Automatic Visibility During Outages
+Viewers arriving from search should never land on a "technical difficulties" card. With
+`AUTO_VISIBILITY_ENABLED=true`, the watchdog moves the broadcast to `OUTAGE_VISIBILITY`
+(default `unlisted`) once the BRB screen has been up longer than `OUTAGE_GRACE_SECONDS`,
+then **restores the visibility it found before the outage** after the camera has been
+healthy for `RECOVERY_GRACE_SECONDS`.
+
+Both grace periods mean a 20-second camera blip changes nothing, and the change is applied
+once per state flip — never re-applied in a loop. Off by default; needs the YouTube API
+credentials you already need for auto-PUBLIC.
+
+### 📅 Sponsor Scheduling & Airtime Reporting
+Sponsors are a paid product, so the software now tracks them like one. In **Admin WebUI →
+Sponsors** each logo gets:
+
+- **Run dates** (`start` / `end`) and an enable toggle — a logo outside its window is simply
+  not loaded into the rotation, no need to move files around at midnight
+- **Impressions and airtime** — how many times it was shown and for how long, all-time and
+  over a rolling window
+- **CSV export** — hand the advertiser a report: `GET /api/sponsors/report.csv?days=30`
+
+Airtime accounting is `flock`-protected, so the concurrent writers behind the two overlay
+slots can't lose counts.
+
+### 🕒 Event Timeline
+`/config/events.jsonl` now records **what happened and when** — boot, encoder start/failure,
+camera down/up, BRB enter/exit, operator start/stop, audio changes, visibility changes,
+solar mode switches. The Dashboard renders it as a timeline, so "it dropped again last
+night" becomes a timestamp instead of a log-scrolling expedition. The file is self-trimming
+(300 KB / 3000 lines) and control characters are stripped, so every line stays valid JSON.
+
+### 📈 Bitrate & FPS Sparklines
+The dashboard samples the encoder every 5 seconds and keeps 15 minutes of history. The
+stat tiles now carry sparklines with a hover readout, and gaps are drawn as gaps — a
+break in the line *is* the outage, which is exactly what you want to see at a glance.
+
+### 📡 Simulcast to Facebook / Twitch / Anywhere
+`SIMULCAST_URLS` takes a comma-separated list of complete RTMP URLs (each including its own
+key). The encoder switches to FFmpeg's `tee` muxer with `onfail=ignore` on **every** leg, so
+a dead Facebook endpoint can never take the YouTube broadcast down with it — FFmpeg logs
+`continuing with 1/2 slaves` and YouTube keeps receiving frames. Simulcast keys are scrubbed
+from the logs alongside the YouTube key.
 
 ---
 
@@ -217,6 +286,11 @@ bottom-right, identical scaling) and serves it as MJPEG to your browser.
 | `/api/stream/retry-now` | POST | Cancel a pending watchdog backoff |
 | `/api/youtube/broadcast` | GET | Current broadcast: title, visibility, viewers |
 | `/api/youtube/privacy` | POST | `{"privacy":"public\|unlisted\|private"}` |
+| `/api/events?limit=N` | GET | Event timeline (newest first, max 500) |
+| `/api/metrics/history` | GET | Bitrate/FPS/speed samples for the sparklines |
+| `/api/sponsors?days=N` | GET | Per-logo schedule, impressions and airtime |
+| `/api/sponsors/report.csv?days=N` | GET | The same report as a CSV download |
+| `/api/sponsors/schedule` | POST | Set a logo's enable flag, run dates and note |
 
 ---
 
@@ -651,6 +725,25 @@ Long-duration events (Heat Waves, Air Quality Statements) display in a compact f
 | Top-Left | Every 30s (configurable) | Always visible |
 | Top-Right | Show 20s, hide 5 min | Periodic display |
 
+> With `DAY_NIGHT_MODE=sun` the DAY/NIGHT folders switch at real sunrise/sunset for your
+> coordinates instead of the fixed `DAY_START_HOUR`/`DAY_END_HOUR` clock.
+
+### Scheduling & Reporting *(v2.11+)*
+
+**Admin WebUI → Sponsors** manages the campaign side without touching the filesystem:
+
+- **Enable / disable** a logo without deleting it
+- **Run dates** — `start` and `end` (`YYYY-MM-DD`, either may be blank for open-ended).
+  A logo outside its window is skipped when the rotation playlist is built.
+- **Note** — free text, e.g. the invoice number or contact
+- **Impressions & airtime** — counted as the logo is actually displayed, all-time and over
+  a rolling window (default 30 days)
+- **CSV export** — `Download report` in the UI, or
+  `curl -u admin:pass http://host:9999/api/sponsors/report.csv?days=30 -o report.csv`
+
+Schedules live in `/config/ads/sponsors.json` and stats in `/config/ads/sponsor_stats.json`;
+both are updated under a file lock, so the two overlay slots can't clobber each other.
+
 ---
 
 ## ⚙️ Advanced Configuration
@@ -745,6 +838,40 @@ Long-duration events (Heat Waves, Air Quality Statements) display in a compact f
 | `OVERLAYAD_ROTATE_TIMER` | `30` | Top-left rotation (seconds) |
 | `TR_SHOW_SECONDS` | `20` | Top-right visible time |
 | `TR_HIDE_SECONDS` | `300` | Top-right hidden time |
+
+### Day / Night Switching
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `DAY_NIGHT_MODE` | `clock` | `sun` follows real sunrise/sunset for `WEATHER_LAT`/`WEATHER_LON`; `clock` uses `DAY_START_HOUR`/`DAY_END_HOUR` |
+| `SUN_OFFSET_MINUTES` | `0` | Positive shifts DAY later at dawn and earlier at dusk (a tighter day); negative widens it |
+
+*Falls back to the clock schedule automatically whenever the solar lookup fails.*
+
+### Simulcast
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `SIMULCAST_URLS` | - | Comma-separated extra RTMP destinations, each a **complete** URL including its own key |
+
+```yaml
+- SIMULCAST_URLS=rtmp://live-api-s.facebook.com:80/rtmp/FB-KEY,rtmp://ingest.twitch.tv/app/TW-KEY
+```
+
+*Every leg (YouTube included) carries `onfail=ignore` — a destination that refuses the
+connection is dropped and the rest keep publishing.*
+
+### Automatic Visibility
+
+Requires the YouTube API credentials below.
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `AUTO_VISIBILITY_ENABLED` | `false` | Hide the broadcast while the BRB screen is up |
+| `OUTAGE_VISIBILITY` | `unlisted` | Visibility applied during an outage |
+| `HEALTHY_VISIBILITY` | `public` | Fallback restore target if the pre-outage value can't be read |
+| `OUTAGE_GRACE_SECONDS` | `120` | How long the outage must persist before hiding |
+| `RECOVERY_GRACE_SECONDS` | `120` | How long health must hold before restoring |
 
 ---
 
@@ -856,6 +983,36 @@ The playlist plays all MP3 files in alphabetical order, then loops back to the b
 ---
 
 ## 📜 Changelog
+
+### v2.11.0 - Solar Switching, Sponsor Reporting, Timeline & Simulcast
+
+**New Features:**
+- **Sunrise/sunset day-night switching** (`DAY_NIGHT_MODE=sun`, `SUN_OFFSET_MINUTES`) — sponsor rotation follows real solar times for the camera's coordinates, cached per day, with automatic fallback to the clock schedule on any failure.
+- **Automatic visibility during outages** (`AUTO_VISIBILITY_ENABLED`) — the broadcast is unlisted while the BRB screen is up and restored to its previous visibility on recovery, both sides gated by grace periods so brief blips change nothing.
+- **Sponsor scheduling and airtime reporting** — per-logo enable/run-dates/notes plus impression and airtime totals, viewable in the WebUI and exportable as CSV.
+- **Event timeline** — `/config/events.jsonl` records boot, encoder start/failure, camera down/up, BRB transitions, operator start/stop, audio and visibility changes; rendered as a timeline on the Dashboard. Self-trimming, control characters stripped.
+- **Bitrate/FPS sparklines** — 15 minutes of encoder history sampled every 5s, drawn on the stat tiles with a hover readout and real gaps for outages.
+- **Simulcast** (`SIMULCAST_URLS`) — publish the same encode to additional RTMP destinations via the `tee` muxer; every leg uses `onfail=ignore`, so a failing destination can't take YouTube down with it. Simulcast keys are scrubbed from the logs.
+
+**New API endpoints:** `/api/events`, `/api/metrics/history`, `/api/sponsors`, `/api/sponsors/report.csv`, `/api/sponsors/schedule`.
+
+### v2.10.0 - Broadcast Controls & One-Page Dashboard
+
+**New Features:**
+- **Start/Stop Broadcast** — writes `/config/stream_paused`, honoured by the supervisor, watchdog and Docker healthcheck, and persists across container restarts.
+- **Visibility switch** — flip the live broadcast between Public/Unlisted/Private from the dashboard.
+- **Live viewer count and broadcast title**, polled on a slow timer to respect the API quota.
+- **One-page dashboard** — preview and broadcast controls side by side, health cards underneath.
+
+**Internal:** `youtube_api.py` factors the OAuth/broadcast logic out of `watchdog.py` so the watchdog and WebUI share one implementation.
+
+### v2.9.1 - Overlay Positioning & Ingest Diagnostics
+
+**New Features:**
+- **Drag-and-drop overlay positioning** — reposition and resize the sponsor and weather overlays in the WebUI; saved to `/config/overlay_layout.json` (defaults reproduce the old hardcoded corners exactly).
+- **Ingest diagnostics** — layered DNS → TCP → TLS probe of the configured ingest (`/api/ingest/check`, `ingest_probe.py`). The stream key is never transmitted.
+- **Stream-key sanity check** — reports format problems without revealing the key.
+- **Redesigned admin UI** — sidebar navigation instead of one endless page.
 
 ### v2.9.0 - Admin WebUI, Stream Preview & Reliability Overhaul
 
