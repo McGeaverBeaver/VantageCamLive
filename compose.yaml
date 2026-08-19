@@ -30,8 +30,10 @@ services:
       # - ADMIN_PORT=9999
       # - PREVIEW_FPS=5             # Preview frame rate (1-15)
       # - PREVIEW_WIDTH=960         # Preview width in px
+      # - PREVIEW_QUALITY=6         # MJPEG quality (2 best - 31 worst)
       # - PREVIEW_IDLE_TIMEOUT=120  # Auto-stop preview after N seconds without viewers
       # - PREVIEW_LOW_CPU=false     # true = decode keyframes only (big CPU saving)
+      # - ADMIN_BIND=0.0.0.0        # 127.0.0.1 = reachable only through a local reverse proxy
 
       # --- HARDWARE ACCELERATION ---
       # Set to 'false' to use software encoding (no Intel GPU required)
@@ -52,9 +54,14 @@ services:
       - WEATHER_LOCATION=My City
       - WEATHER_TIMEZONE=America/New_York
       - CAMERA_HEADING=E
+      # - WEATHER_ENABLED=true    # false removes the weather overlay entirely
+      # - ALERT_COUNTRY=CA        # Force CA (Environment Canada) or US (NWS); auto-detected when unset
+      # - FLASH_ON_DURATION=0.7   # Extreme-alert flash: seconds lit
+      # - FLASH_OFF_DURATION=0.3  # Extreme-alert flash: seconds dark
 
       # --- DAY / NIGHT SPONSOR SWITCHING ---
-      # "sun" follows real sunrise/sunset for WEATHER_LAT/LON (recommended);
+      # "sun" (the default) follows real sunrise/sunset for WEATHER_LAT/LON and
+      # falls back to the clock automatically if the lookup fails;
       # "clock" keeps the fixed DAY_START_HOUR/DAY_END_HOUR schedule.
       - DAY_NIGHT_MODE=sun
       # - SUN_OFFSET_MINUTES=0   # +30 switches 30 min after sunrise / before sunset
@@ -77,6 +84,11 @@ services:
       # How often to check Env-Canada & OpenMeteo for new data (in seconds).
       # Default: 900 (15 Minutes)
       - ALERTS_UPDATE_INTERVAL=900
+
+      # --- AUDIO CONTROL API (port 9998) ---
+      # Require an X-API-Key header on the mute/unmute/music endpoints.
+      # Unset = no auth, so keep port 9998 on your LAN.
+      # - AUDIO_API_KEY=some_long_random_string
 
       # --- DEBUGGING ---
       # - WEATHER_DEBUG=true

@@ -58,6 +58,8 @@
 
   <!-- Stream Settings -->
   <Config Name="Enable Local Stream" Target="ENABLE_LOCAL_STREAM" Default="false" Mode="" Description="Enable RTSP output for local preview (set false for direct YouTube mode)" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <Config Name="Video Bitrate" Target="VIDEO_BITRATE" Default="14M" Mode="" Description="Internal pipeline bitrate before the YouTube encode" Type="Variable" Display="advanced" Required="false" Mask="false">14M</Config>
+  <Config Name="Video FPS" Target="VIDEO_FPS" Default="30" Mode="" Description="Framerate" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
   <Config Name="Scaling Mode" Target="SCALING_MODE" Default="fill" Mode="" Description="fill (zoom/crop to 16:9) or fit (letterbox)" Type="Variable" Display="always" Required="false" Mask="false">fill</Config>
 
   <!-- Weather Settings -->
@@ -108,7 +110,7 @@
   <Config Name="Day End Hour" Target="DAY_END_HOUR" Default="20" Mode="" Description="Hour (0-23) when Night mode begins" Type="Variable" Display="advanced" Required="false" Mask="false">20</Config>
 
   <!-- Day/Night Switching -->
-  <Config Name="Day/Night Mode" Target="DAY_NIGHT_MODE" Default="clock" Mode="" Description="'sun' follows real sunrise/sunset for your Weather Lat/Lon (recommended); 'clock' uses the fixed Day Start/End Hour. Falls back to the clock automatically if the solar lookup fails." Type="Variable" Display="advanced" Required="false" Mask="false">clock</Config>
+  <Config Name="Day/Night Mode" Target="DAY_NIGHT_MODE" Default="sun" Mode="" Description="'sun' (default) follows real sunrise/sunset for your Weather Lat/Lon; 'clock' uses the fixed Day Start/End Hour. Falls back to the clock automatically if the solar lookup fails." Type="Variable" Display="advanced" Required="false" Mask="false">sun</Config>
   <Config Name="Sun Offset Minutes" Target="SUN_OFFSET_MINUTES" Default="0" Mode="" Description="Only used when Day/Night Mode = sun. Positive switches that many minutes after sunrise and before sunset (cameras go dark before astronomical sunset); negative widens the day." Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
 
   <!-- Simulcast -->
@@ -126,6 +128,9 @@
 
   <!-- Debug -->
   <Config Name="Weather Debug" Target="WEATHER_DEBUG" Default="false" Mode="" Description="Enable verbose weather logging" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Weather Overlay" Target="WEATHER_ENABLED" Default="true" Mode="" Description="Render the weather/alert overlay at all. false removes it from the frame." Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Alert Flash On" Target="FLASH_ON_DURATION" Default="0.7" Mode="" Description="Seconds an extreme-alert overlay stays lit while flashing" Type="Variable" Display="advanced" Required="false" Mask="false">0.7</Config>
+  <Config Name="Alert Flash Off" Target="FLASH_OFF_DURATION" Default="0.3" Mode="" Description="Seconds an extreme-alert overlay stays dark while flashing" Type="Variable" Display="advanced" Required="false" Mask="false">0.3</Config>
   <Config Name="Alert Country" Target="ALERT_COUNTRY" Default="" Mode="" Description="Force alert source: CA (Environment Canada) or US (NWS). Recommended near the border; auto-detected when empty." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   
   <!-- Fallback Mode -->
@@ -137,6 +142,7 @@
   <Config Name="Preview Width" Target="PREVIEW_WIDTH" Default="960" Mode="" Description="Preview image width in pixels" Type="Variable" Display="advanced" Required="false" Mask="false">960</Config>
   <Config Name="Preview Idle Timeout" Target="PREVIEW_IDLE_TIMEOUT" Default="120" Mode="" Description="Seconds without viewers before the preview auto-stops to save CPU" Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
   <Config Name="Preview Low CPU Mode" Target="PREVIEW_LOW_CPU" Default="false" Mode="" Description="Decode keyframes only for the preview (choppier but much less CPU)" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Admin Bind Address" Target="ADMIN_BIND" Default="0.0.0.0" Mode="" Description="Interface the dashboard binds to. Set 127.0.0.1 to reach it only through a reverse proxy on the same host." Type="Variable" Display="advanced" Required="false" Mask="false">0.0.0.0</Config>
   <Config Name="Preview Quality" Target="PREVIEW_QUALITY" Default="6" Mode="" Description="MJPEG preview quality (2 = best, 31 = worst)" Type="Variable" Display="advanced" Required="false" Mask="false">6</Config>
   <Config Name="Admin WebUI Port (env)" Target="ADMIN_PORT" Default="9999" Mode="" Description="Port the admin dashboard listens on inside the container - change the port mapping below to match" Type="Variable" Display="advanced" Required="false" Mask="false">9999</Config>
 

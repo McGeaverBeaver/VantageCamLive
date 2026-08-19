@@ -242,6 +242,31 @@ Open `http://<host>:9999/` and log in with `ADMIN_USER` / `ADMIN_PASS`.
 > other than the shipped defaults. Keep port 9999 on your LAN — don't port-forward
 > it to the internet (put it behind a reverse proxy with TLS if you need remote access).
 
+### The Pages
+
+| Page | What it's for |
+|:-----|:--------------|
+| **Dashboard** | Live preview and broadcast controls side by side, then health: bitrate/FPS/speed sparklines, camera, watchdog, system, and the event timeline |
+| **Overlay Layout** | Drag and resize the sponsor and weather overlays on a scale model of the frame, then save (and optionally apply, which restarts the encoder) |
+| **Sponsors** | Upload, preview and delete logos per slot and Day/Night mode |
+| **Schedule & Airtime** | Run windows per logo, impression and airtime totals, CSV export, and which set is airing right now |
+| **Weather & Alerts** | The rendered overlay PNGs straight from disk, plus an on-demand regenerate |
+| **Audio** | Mute / camera audio / music playlist |
+| **Diagnostics** | Ingest connection probe (DNS → TCP → TLS), stream-key sanity check, restart and retry-now controls |
+| **Logs** | Tail `watchdog`, `ffmpeg` and `weather` logs with the stream key scrubbed out |
+| **Settings** | The effective configuration as the container actually sees it |
+
+### Broadcast Controls
+
+- **Start / Stop Broadcast** — Stop writes `/config/stream_paused`, which the supervisor,
+  the watchdog and the Docker healthcheck all honour, so nothing respawns the encoder
+  behind your back and the container is not marked unhealthy. It persists across restarts.
+- **Visibility** — flip the live broadcast between Public / Unlisted / Private (needs the
+  YouTube API credentials).
+- **Restart** — bounce the encoder without touching the broadcast.
+- **Retry now** — cancel a pending watchdog backoff instead of waiting out the delay.
+- Live **viewer count** and broadcast title, polled slowly to respect the API quota.
+
 ### Live Preview
 
 The preview spawns a **separate low-FPS FFmpeg pipeline** that composes the same
@@ -268,7 +293,9 @@ bottom-right, identical scaling) and serves it as MJPEG to your browser.
 
 | Endpoint | Method | Description |
 |:---------|:-------|:------------|
-| `/api/status` | GET | Full status JSON (stream, camera, audio, watchdog, system) |
+| `/api/health` | GET | Liveness probe (no auth) |
+| `/api/status` | GET | Full status JSON (stream, camera, audio, watchdog, day/night, preview, system) |
+| `/api/config` | GET | Effective configuration as the container sees it |
 | `/api/preview/start?source=auto\|camera\|brb` | POST | Start the preview pipeline |
 | `/api/preview/stop` | POST | Stop it (frees the CPU immediately) |
 | `/api/preview/stream` | GET | MJPEG stream |
@@ -277,6 +304,7 @@ bottom-right, identical scaling) and serves it as MJPEG to your browser.
 | `/api/stream/restart` | POST | Restart the broadcast FFmpeg |
 | `/api/weather/refresh` | POST | Regenerate the weather overlay now |
 | `/api/ads` / `/api/ads/upload` / `/api/ads/delete` | GET/POST | Sponsor logo management |
+| `/api/ads/image?slot=&mode=&name=` | GET | One sponsor logo (thumbnails in the UI) |
 | `/api/logs?name=watchdog\|ffmpeg\|weather` | GET | Tail logs |
 | `/api/overlay/{weather,tl,tr,fallback}` | GET | Current overlay PNGs (zero CPU) |
 | `/api/layout` | GET/POST | Overlay positions (`?apply=true` also restarts the encoder) |
@@ -371,19 +399,29 @@ Create a folder on your host for persistent data. The container auto-creates sub
 /config/
 ├── ads/
 │   ├── topleft/
-│   │   ├── DAY/         # Daytime sponsor logos
-│   │   └── NIGHT/       # Nighttime sponsor logos
-│   └── topright/
-│       ├── DAY/
-│       └── NIGHT/
+│   │   ├── DAY/            # Daytime sponsor logos
+│   │   └── NIGHT/          # Nighttime sponsor logos
+│   ├── topright/
+│   │   ├── DAY/
+│   │   └── NIGHT/
+│   ├── sponsors.json       # Run windows per logo (set in the WebUI)
+│   └── sponsor_stats.json  # Impression + airtime counters
 ├── music/               # MP3 files for music streaming mode
 ├── weather_icons/       # Auto-downloaded weather icons
 ├── watchdog.log         # Self-healing activity log
-├── ffmpeg.log           # FFmpeg stderr (viewable in the Admin WebUI)
+├── ffmpeg.log           # FFmpeg stderr, stream key scrubbed (viewable in the WebUI)
+├── events.jsonl         # Event timeline, self-trimming
 ├── watchdog_state.json  # Persistent watchdog state
+├── overlay_layout.json  # Overlay positions saved from the WebUI
+├── sun_times.json       # Cached sunrise/sunset for today
+├── day_night            # Resolved "DAY" or "NIGHT"
 ├── audio_mode           # Current audio: "muted", "unmuted", or "music"
-└── stream_mode          # Current mode: "normal" or "fallback"
+├── stream_mode          # Current mode: "normal" or "fallback"
+└── stream_paused        # Present only while the broadcast is stopped from the WebUI
 ```
+
+> Delete `stream_paused` (or press **Start Broadcast**) to resume a broadcast that was
+> stopped from the dashboard — the stop is deliberately persistent across restarts.
 
 ### Quick Start (Unraid)
 
@@ -446,11 +484,32 @@ services:
       - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxxxx/xxxxx
       - DISCORD_USER_ID=123456789012345678
       
-      # === YOUTUBE API (Optional - for auto-PUBLIC) ===
+      # === YOUTUBE API (Optional - for auto-PUBLIC, visibility control, viewer count) ===
       # - YOUTUBE_CLIENT_ID=xxxxx.apps.googleusercontent.com
       # - YOUTUBE_CLIENT_SECRET=GOCSPX-xxxxx
       # - YOUTUBE_REFRESH_TOKEN=1//xxxxx
-      
+
+      # === ADMIN WEBUI (dashboard + preview, port 9999) ===
+      - ADMIN_WEBUI_ENABLED=true
+      # - PREVIEW_LOW_CPU=false   # true = keyframes only, big CPU saving on 4K cams
+
+      # === DAY / NIGHT SWITCHING ===
+      # "sun" (default) follows real sunrise/sunset for WEATHER_LAT/LON;
+      # "clock" keeps the fixed DAY_START_HOUR/DAY_END_HOUR schedule.
+      # - DAY_NIGHT_MODE=sun
+      # - SUN_OFFSET_MINUTES=0
+
+      # === SIMULCAST (Optional) ===
+      # Complete URLs including each service's own key. A failing destination
+      # can never take the YouTube broadcast down with it.
+      # - SIMULCAST_URLS=rtmp://live-api-s.facebook.com:80/rtmp/FB-KEY
+
+      # === AUTOMATIC VISIBILITY (Optional, needs the YouTube API creds above) ===
+      # Unlist the broadcast while the BRB screen is up, restore it on recovery.
+      # - AUTO_VISIBILITY_ENABLED=true
+      # - OUTAGE_VISIBILITY=unlisted
+      # - HEALTHY_VISIBILITY=public
+
     volumes:
       - /mnt/user/appdata/vantagecam:/config
     ports:
@@ -475,11 +534,14 @@ services:
       - HARDWARE_ACCEL=false
       - SOFTWARE_PRESET=faster
       - SOFTWARE_CRF=23
+      - ADMIN_USER=admin
+      - ADMIN_PASS=change_me_please
       # ... (same as above)
     volumes:
       - /mnt/user/appdata/vantagecam:/config
     ports:
-      - 9998:9998
+      - 9998:9998  # Audio API
+      - 9999:9999  # Admin WebUI
     restart: unless-stopped
 ```
 
@@ -706,12 +768,16 @@ Long-duration events (Heat Waves, Air Quality Statements) display in a compact f
 ```
 /config/ads/
 ├── topleft/
-│   ├── DAY/      # 6 AM - 8 PM
-│   └── NIGHT/    # 8 PM - 6 AM
+│   ├── DAY/      # sunrise → sunset (or DAY_START_HOUR → DAY_END_HOUR)
+│   └── NIGHT/    # sunset → sunrise
 └── topright/
     ├── DAY/
     └── NIGHT/
 ```
+
+Which folder is airing is decided by `DAY_NIGHT_MODE` — solar times by default, the fixed
+clock schedule if you set `clock`. **Admin WebUI → Schedule & Airtime** shows the current
+answer and today's sunrise/sunset.
 
 ### Supported Formats
 - PNG (recommended - supports transparency)
@@ -748,6 +814,18 @@ both are updated under a file lock, so the two overlay slots can't clobber each 
 
 ## ⚙️ Advanced Configuration
 
+Every variable the container reads is listed below, with the default that is actually
+compiled in. Anything not listed here is internal and not configurable.
+
+### Required
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `RTSP_SOURCE` | `rtsp://192.168.1.100:8554/stream` | Your camera's RTSP URL. The placeholder default will not work — set this. |
+| `ADMIN_USER` | `cam_admin` | Username for the Admin WebUI and the internal RTSP auth |
+| `ADMIN_PASS` | `your_secure_password` | Password for both. **The WebUI refuses every request while this is unset or left at a shipped default** (`your_secure_password`, `change_me_please`). |
+| `YOUTUBE_KEY` | - | Stream key. Without it the container still runs (preview, overlays, weather) but publishes nothing. |
+
 ### User Permissions
 
 | Variable | Default | Description |
@@ -761,13 +839,14 @@ both are updated under a file lock, so the two overlay slots can't clobber each 
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `HARDWARE_ACCEL` | `true` | Use VAAPI encoding |
+| `HARDWARE_ACCEL` | `true` | Use VAAPI encoding (falls back to software automatically if VAAPI fails) |
 | `VAAPI_DEVICE` | `/dev/dri/renderD128` | GPU device |
-| `SOFTWARE_PRESET` | `faster` | x264 preset |
-| `SOFTWARE_CRF` | `23` | Quality (lower=better) |
-| `SCALING_MODE` | `fill` | `fill` or `fit` |
-| `VIDEO_BITRATE` | `14M` | Output bitrate |
+| `SOFTWARE_PRESET` | `faster` | x264 preset — only used when `HARDWARE_ACCEL=false` |
+| `SOFTWARE_CRF` | `23` | x264 quality, lower is better — only used when `HARDWARE_ACCEL=false` |
+| `SCALING_MODE` | `fill` | `fill` zooms/crops to 16:9, `fit` letterboxes |
+| `VIDEO_BITRATE` | `14M` | Internal pipeline bitrate |
 | `VIDEO_FPS` | `30` | Framerate |
+| `ENABLE_LOCAL_STREAM` | `false` | Publish a local RTSP copy on 8554 via MediaMTX. Leave `false` for direct-to-YouTube (saves CPU/RAM). |
 
 ### YouTube
 
@@ -779,25 +858,41 @@ both are updated under a file lock, so the two overlay slots can't clobber each 
 | `YOUTUBE_HEIGHT` | `1440` | Output height |
 | `YOUTUBE_BITRATE` | `4500k` | Upload bitrate |
 
+### Admin WebUI & Preview
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `ADMIN_WEBUI_ENABLED` | `true` | Enable the dashboard |
+| `ADMIN_PORT` | `9999` | Port the dashboard listens on |
+| `ADMIN_BIND` | `0.0.0.0` | Bind address. Set `127.0.0.1` to expose it only through a reverse proxy on the same host. |
+| `PREVIEW_FPS` | `5` | Preview frame rate (1–15) |
+| `PREVIEW_WIDTH` | `960` | Preview width in pixels |
+| `PREVIEW_QUALITY` | `6` | MJPEG quality (2 best – 31 worst) |
+| `PREVIEW_IDLE_TIMEOUT` | `120` | Seconds without viewers before the preview auto-stops |
+| `PREVIEW_LOW_CPU` | `false` | Decode keyframes only (~1 fps, big CPU saving on 4K cameras) |
+
 ### Fallback Mode
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `FALLBACK_ENABLED` | `true` | Enable BRB screen when camera is unreachable |
+| `FALLBACK_ENABLED` | `true` | Show the "We'll Be Right Back" screen when the camera is unreachable |
 
 ### Self-Healing Watchdog
+
+The watchdog only starts when `WATCHDOG_ENABLED=true` **and** `YOUTUBE_KEY` is set — with
+no key there is no broadcast to watch.
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
 | `WATCHDOG_ENABLED` | `false` | Enable watchdog |
-| `WATCHDOG_STATUS_URL` | - | Status endpoint URL |
+| `WATCHDOG_STATUS_URL` | - | Status endpoint URL (see [YouTube API Setup](#-youtube-api-setup-guide)) |
 | `WATCHDOG_STARTUP_DELAY` | `180` | Wait before first check (seconds) |
 | `WATCHDOG_CHECK_INTERVAL` | `30` | Check interval (seconds) |
-| `WATCHDOG_INITIAL_DELAY` | `10` | Initial backoff delay |
-| `WATCHDOG_MAX_DELAY` | `900` | Max backoff (15 min) |
-| `WATCHDOG_STABILITY_THRESHOLD` | `30` | Stability time to reset backoff |
-| `WATCHDOG_VERIFICATION_TIMEOUT` | `120` | Time to wait for YouTube "live" |
-| `WATCHDOG_RTSP_CHECK` | `true` | Check RTSP before restart |
+| `WATCHDOG_INITIAL_DELAY` | `10` | Initial backoff delay, doubling each failure |
+| `WATCHDOG_MAX_DELAY` | `900` | Backoff ceiling (15 min) |
+| `WATCHDOG_STABILITY_THRESHOLD` | `30` | Stable seconds required to reset the backoff |
+| `WATCHDOG_VERIFICATION_TIMEOUT` | `120` | Time to wait for YouTube to report "live" after a restart |
+| `WATCHDOG_RTSP_CHECK` | `true` | Verify the camera is reachable before restarting |
 | `WATCHDOG_VERBOSE` | `true` | Detailed logging |
 
 ### Discord Notifications
@@ -809,6 +904,9 @@ both are updated under a file lock, so the two overlay slots can't clobber each 
 
 ### YouTube API
 
+Needed for the watchdog's auto-PUBLIC recovery, the dashboard's visibility switch, the
+viewer count, and automatic visibility during outages.
+
 | Variable | Default | Description |
 |:---------|:--------|:------------|
 | `YOUTUBE_CLIENT_ID` | - | OAuth Client ID |
@@ -819,34 +917,46 @@ both are updated under a file lock, so the two overlay slots can't clobber each 
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `WEATHER_LAT` | - | Latitude |
-| `WEATHER_LON` | - | Longitude |
-| `WEATHER_LOCATION` | - | Display name |
-| `WEATHER_TIMEZONE` | `America/Toronto` | Timezone |
-| `CAMERA_HEADING` | `E` | Direction the camera faces (compass point or degrees) |
+| `WEATHER_ENABLED` | `true` | Render the weather/alert overlay at all |
+| `WEATHER_LAT` | `40.7128` | Latitude — also used for sunrise/sunset when `DAY_NIGHT_MODE=sun` |
+| `WEATHER_LON` | `-74.0060` | Longitude |
+| `WEATHER_LOCATION` | `My City` | Display name on the overlay |
+| `WEATHER_TIMEZONE` | `America/Toronto` | Timezone (also sets the container's `TZ`) |
+| `CAMERA_HEADING` | `E` (90°) | Direction the camera faces — compass point or degrees |
 | `ALERTS_UPDATE_INTERVAL` | `900` | Update interval (seconds) |
 | `ALERT_COUNTRY` | auto | Force alert source: `CA` (Environment Canada) or `US` (NWS). Recommended near the border. |
+| `FLASH_ON_DURATION` | `0.7` | Seconds an extreme-alert overlay stays lit while flashing |
+| `FLASH_OFF_DURATION` | `0.3` | Seconds it stays dark |
+| `WEATHER_DEBUG` | `false` | Verbose weather logging |
 
 ### Sponsor Overlays
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `SCALE_TL` | `500` | Top-left max width |
-| `SCALE_TR` | `400` | Top-right max width |
-| `DAY_START_HOUR` | `6` | Day mode start |
-| `DAY_END_HOUR` | `20` | Night mode start |
+| `SCALE_TL` | `500` | Top-left max width (px) |
+| `SCALE_TR` | `400` | Top-right max width (px) |
 | `OVERLAYAD_ROTATE_TIMER` | `30` | Top-left rotation (seconds) |
 | `TR_SHOW_SECONDS` | `20` | Top-right visible time |
 | `TR_HIDE_SECONDS` | `300` | Top-right hidden time |
+| `DAY_START_HOUR` | `6` | Day mode start — only used when `DAY_NIGHT_MODE=clock` |
+| `DAY_END_HOUR` | `20` | Night mode start — only used when `DAY_NIGHT_MODE=clock` |
+
+*Overlay positions and sizes are set in **Admin WebUI → Overlay Layout**, not by variables;
+`SCALE_TL`/`SCALE_TR` are the fallback sizes used until you save a layout.*
 
 ### Day / Night Switching
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `DAY_NIGHT_MODE` | `clock` | `sun` follows real sunrise/sunset for `WEATHER_LAT`/`WEATHER_LON`; `clock` uses `DAY_START_HOUR`/`DAY_END_HOUR` |
-| `SUN_OFFSET_MINUTES` | `0` | Positive shifts DAY later at dawn and earlier at dusk (a tighter day); negative widens it |
+| `DAY_NIGHT_MODE` | `sun` | `sun` follows real sunrise/sunset for `WEATHER_LAT`/`WEATHER_LON`; `clock` uses the fixed `DAY_START_HOUR`/`DAY_END_HOUR` |
+| `SUN_OFFSET_MINUTES` | `0` | Positive switches that many minutes after sunrise and before sunset (a tighter day); negative widens it |
 
-*Falls back to the clock schedule automatically whenever the solar lookup fails.*
+> ⚠️ **Changed in v2.11.0:** the default is now `sun`, so after upgrading your sponsor
+> folders switch at real sunrise/sunset instead of 06:00/20:00. Set `DAY_NIGHT_MODE=clock`
+> to keep the old fixed schedule.
+
+*Falls back to the clock schedule automatically whenever the solar lookup fails, so a
+network outage can never leave the overlays in the wrong mode.*
 
 ### Simulcast
 
@@ -859,11 +969,12 @@ both are updated under a file lock, so the two overlay slots can't clobber each 
 ```
 
 *Every leg (YouTube included) carries `onfail=ignore` — a destination that refuses the
-connection is dropped and the rest keep publishing.*
+connection is dropped and the rest keep publishing. Simulcast keys are scrubbed from the
+logs just like `YOUTUBE_KEY`.*
 
 ### Automatic Visibility
 
-Requires the YouTube API credentials below.
+Requires the YouTube API credentials above.
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
@@ -872,6 +983,12 @@ Requires the YouTube API credentials below.
 | `HEALTHY_VISIBILITY` | `public` | Fallback restore target if the pre-outage value can't be read |
 | `OUTAGE_GRACE_SECONDS` | `120` | How long the outage must persist before hiding |
 | `RECOVERY_GRACE_SECONDS` | `120` | How long health must hold before restoring |
+
+### Audio API
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `AUDIO_API_KEY` | - | Require `X-API-Key` on the audio endpoints (port 9998). Unset means no auth — keep the port on your LAN. |
 
 ---
 

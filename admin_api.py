@@ -68,7 +68,7 @@ WEATHER_ENABLED = os.getenv("WEATHER_ENABLED", "true").lower() == "true"
 
 # "sun" resolves DAY/NIGHT from real sunrise/sunset; anything else is the
 # fixed DAY_START_HOUR/DAY_END_HOUR clock schedule.
-DAY_NIGHT_MODE = os.getenv("DAY_NIGHT_MODE", "clock").strip().lower()
+DAY_NIGHT_MODE = os.getenv("DAY_NIGHT_MODE", "sun").strip().lower()
 SCALE_TL = os.getenv("SCALE_TL", "500")
 SCALE_TR = os.getenv("SCALE_TR", "400")
 YOUTUBE_KEY = os.getenv("YOUTUBE_KEY", "")
@@ -1076,7 +1076,7 @@ def build_config_view():
         "hardware_accel": HARDWARE_ACCEL,
         "encoder_active": read_text(ENCODER_MODE_FILE, "unknown"),
         "resolution": f"{YOUTUBE_WIDTH}x{YOUTUBE_HEIGHT}",
-        "youtube_url": os.getenv("YOUTUBE_URL", ""),
+        "youtube_url": os.getenv("YOUTUBE_URL", "rtmp://a.rtmp.youtube.com/live2"),
         "youtube_key": mask(YOUTUBE_KEY),
         "youtube_bitrate": os.getenv("YOUTUBE_BITRATE", "4500k"),
         "direct_youtube_mode": bool(YOUTUBE_KEY) and not ENABLE_LOCAL_STREAM,

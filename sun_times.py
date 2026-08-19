@@ -26,8 +26,8 @@ CONFIG_DIR = os.getenv("VANTAGECAM_CONFIG_DIR", "/config")
 CACHE_FILE = os.path.join(CONFIG_DIR, "sun_times.json")
 MODE_FILE = os.path.join(CONFIG_DIR, "day_night")
 
-LAT = os.getenv("WEATHER_LAT", "44.3894")
-LON = os.getenv("WEATHER_LON", "-79.6903")
+LAT = os.getenv("WEATHER_LAT", "40.7128")
+LON = os.getenv("WEATHER_LON", "-74.0060")
 TIMEZONE = os.getenv("WEATHER_TIMEZONE", "America/Toronto")
 
 # Positive shifts DAY later at dawn and earlier at dusk (a tighter day);
