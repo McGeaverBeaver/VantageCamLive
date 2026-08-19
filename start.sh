@@ -583,48 +583,46 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
             # used instead of file size so the file can be safely truncated below
             # without breaking detection.)
             # Skip frozen detection for first 5 seconds after startup (initialization time)
-            if true; then
-                FFMPEG_UPTIME=$(( $(date +%s) - FFMPEG_START_TIME ))
-                if [ $FFMPEG_UPTIME -gt 5 ]; then
-                    CURRENT_MTIME=$(stat -c %Y "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)
-                    if [ "$CURRENT_MTIME" = "$LAST_MTIME" ]; then
-                        FROZEN_COUNT=$((FROZEN_COUNT + 1))
-                        if [ $FROZEN_COUNT -ge 12 ]; then
-                            log "[ERROR] FFmpeg FROZEN (no progress writes for 12s after ${FFMPEG_UPTIME}s uptime). Killing..."
-                            kill -9 $FFMPEG_PID 2>/dev/null
-                            break
-                        fi
-                    else
-                        FROZEN_COUNT=0
-                        LAST_MTIME="$CURRENT_MTIME"
-                    fi
-                    # VIDEO-FRAME CHECK: with silent/music audio the progress
-                    # file keeps updating even if the camera video stalls, so
-                    # also require the video frame counter to advance.
-                    CURRENT_FRAME=$(tail -c 4096 "$FFMPEG_PROGRESS_FILE" 2>/dev/null | grep '^frame=' | tail -1 | cut -d= -f2)
-                    if [ -n "$CURRENT_FRAME" ] && [ "$CURRENT_FRAME" = "$LAST_FRAME" ]; then
-                        VIDEO_FROZEN_COUNT=$((VIDEO_FROZEN_COUNT + 1))
-                        if [ $VIDEO_FROZEN_COUNT -ge 30 ]; then
-                            log "[ERROR] Video FROZEN at frame $CURRENT_FRAME for 30s (audio still flowing). Killing..."
-                            kill -9 $FFMPEG_PID 2>/dev/null
-                            break
-                        fi
-                    else
-                        VIDEO_FROZEN_COUNT=0
-                        LAST_FRAME="$CURRENT_FRAME"
-                    fi
-                    # Cap progress file growth on long runs (~10MB/day previously
-                    # grew unbounded in /config)
-                    if [ $((LOOP_COUNT % 3600)) -eq 0 ] && [ "$(wc -c < "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)" -gt 10485760 ]; then
-                        : > "$FFMPEG_PROGRESS_FILE"
+            FFMPEG_UPTIME=$(( $(date +%s) - FFMPEG_START_TIME ))
+            if [ $FFMPEG_UPTIME -gt 5 ]; then
+                CURRENT_MTIME=$(stat -c %Y "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)
+                if [ "$CURRENT_MTIME" = "$LAST_MTIME" ]; then
+                    FROZEN_COUNT=$((FROZEN_COUNT + 1))
+                    if [ $FROZEN_COUNT -ge 12 ]; then
+                        log "[ERROR] FFmpeg FROZEN (no progress writes for 12s after ${FFMPEG_UPTIME}s uptime). Killing..."
+                        kill -9 $FFMPEG_PID 2>/dev/null
+                        break
                     fi
                 else
-                    # Still initializing, reset frozen counters
                     FROZEN_COUNT=0
-                    LAST_MTIME=""
-                    VIDEO_FROZEN_COUNT=0
-                    LAST_FRAME=""
+                    LAST_MTIME="$CURRENT_MTIME"
                 fi
+                # VIDEO-FRAME CHECK: with silent/music audio the progress
+                # file keeps updating even if the camera video stalls, so
+                # also require the video frame counter to advance.
+                CURRENT_FRAME=$(tail -c 4096 "$FFMPEG_PROGRESS_FILE" 2>/dev/null | grep '^frame=' | tail -1 | cut -d= -f2)
+                if [ -n "$CURRENT_FRAME" ] && [ "$CURRENT_FRAME" = "$LAST_FRAME" ]; then
+                    VIDEO_FROZEN_COUNT=$((VIDEO_FROZEN_COUNT + 1))
+                    if [ $VIDEO_FROZEN_COUNT -ge 30 ]; then
+                        log "[ERROR] Video FROZEN at frame $CURRENT_FRAME for 30s (audio still flowing). Killing..."
+                        kill -9 $FFMPEG_PID 2>/dev/null
+                        break
+                    fi
+                else
+                    VIDEO_FROZEN_COUNT=0
+                    LAST_FRAME="$CURRENT_FRAME"
+                fi
+                # Cap progress file growth on long runs (~10MB/day previously
+                # grew unbounded in /config)
+                if [ $((LOOP_COUNT % 3600)) -eq 0 ] && [ "$(wc -c < "$FFMPEG_PROGRESS_FILE" 2>/dev/null || echo 0)" -gt 10485760 ]; then
+                    : > "$FFMPEG_PROGRESS_FILE"
+                fi
+            else
+                # Still initializing, reset frozen counters
+                FROZEN_COUNT=0
+                LAST_MTIME=""
+                VIDEO_FROZEN_COUNT=0
+                LAST_FRAME=""
             fi
 
             # 2. Audio Check
