@@ -1,4 +1,4 @@
-# VantageCam Live v2.11.0
+# VantageCam Live v2.11.1
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker Build](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml/badge.svg)](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml)
@@ -1100,6 +1100,12 @@ The playlist plays all MP3 files in alphabetical order, then loops back to the b
 ---
 
 ## 📜 Changelog
+
+### v2.11.1 - Overlay layout changes now reach the air
+
+**Fixed:**
+- **"Save & Apply to Stream" restarted the encoder but the overlays didn't move or resize on YouTube.** `start.sh` built the FFmpeg filter graph once at container boot and reused it on every relaunch, so the encoder came back with the *old* positions while the preview (which rebuilds its graph on each start) showed the new ones. The graph is now rebuilt from `/config/overlay_layout.json` before **every** launch — Apply, watchdog restarts, freeze recovery and the BRB screen — and each launch logs the layout it used. Previously the only way to get a saved layout on air was a full container restart.
+- In MediaMTX mode, Apply now restarts the local compositor (the process that actually draws the overlays) rather than only the YouTube re-streaming leg.
 
 ### v2.11.0 - Solar Switching, Sponsor Reporting, Timeline & Simulcast
 

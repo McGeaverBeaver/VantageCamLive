@@ -429,8 +429,15 @@ load_overlay_layout() {
     : "${LAYOUT_WEATHER_X:=1640}" "${LAYOUT_WEATHER_Y:=920}"
     : "${LAYOUT_WEATHER_W:=900}"  "${LAYOUT_WEATHER_H:=500}" "${LAYOUT_WEATHER_ENABLED:=1}"
 }
+layout_summary() {
+    local tl_off tr_off wx_off
+    [ "$LAYOUT_TL_ENABLED" = "1" ] || tl_off=" (off)"
+    [ "$LAYOUT_TR_ENABLED" = "1" ] || tr_off=" (off)"
+    [ "$LAYOUT_WEATHER_ENABLED" = "1" ] || wx_off=" (off)"
+    echo "TL ${LAYOUT_TL_W}x${LAYOUT_TL_H}@${LAYOUT_TL_X},${LAYOUT_TL_Y}${tl_off} | TR ${LAYOUT_TR_W}x${LAYOUT_TR_H}@${LAYOUT_TR_X},${LAYOUT_TR_Y}${tr_off} | Weather ${LAYOUT_WEATHER_W}x${LAYOUT_WEATHER_H}@${LAYOUT_WEATHER_X},${LAYOUT_WEATHER_Y}${wx_off}"
+}
 load_overlay_layout
-log "Overlay layout: TL ${LAYOUT_TL_W}x${LAYOUT_TL_H}@${LAYOUT_TL_X},${LAYOUT_TL_Y} | TR ${LAYOUT_TR_W}x${LAYOUT_TR_H}@${LAYOUT_TR_X},${LAYOUT_TR_Y} | Weather ${LAYOUT_WEATHER_W}x${LAYOUT_WEATHER_H}@${LAYOUT_WEATHER_X},${LAYOUT_WEATHER_Y}"
+log "Overlay layout: $(layout_summary)"
 
 log "--- Configuring Stream Output ---"
 if [ "$DIRECT_YOUTUBE_MODE" = "false" ]; then
@@ -658,12 +665,6 @@ fi
 # - thread_queue_size: Large queue for bursty network conditions
 # - timeout: 3 second timeout for initial connect and for reads (detect failures faster)
 RTSP_INPUT_OPTS="-thread_queue_size 2048 -rtsp_transport tcp -buffer_size 4194304 -max_delay 500000 -fflags +genpts+discardcorrupt -err_detect ignore_err -timeout 3000000 -i $RTSP_SOURCE"
-OVERLAY_INPUTS=""
-
-FILTER_CHAIN="$CAMERA_FILTER"
-LAST_V="base"
-INPUT_COUNT=1
-
 # Overlay positions come from /config/overlay_layout.json (editable in the
 # Admin WebUI). Coordinates are absolute within the 2560x1440 canvas above.
 add_overlay() {
@@ -678,21 +679,38 @@ add_overlay() {
     LAST_V="v$INPUT_COUNT"; INPUT_COUNT=$((INPUT_COUNT+1))
 }
 
-if [ "$LAYOUT_TL_ENABLED" = "1" ]; then
-    add_overlay "$AD_PLAYLIST_TL" "$LAYOUT_TL_X" "$LAYOUT_TL_Y" "$LAYOUT_TL_W" "$LAYOUT_TL_H"
-fi
-if [ "$LAYOUT_TR_ENABLED" = "1" ]; then
-    add_overlay "$AD_PLAYLIST_TR" "$LAYOUT_TR_X" "$LAYOUT_TR_Y" "$LAYOUT_TR_W" "$LAYOUT_TR_H"
-fi
-if [ "$WEATHER_ENABLED" = "true" ] && [ "$LAYOUT_WEATHER_ENABLED" = "1" ]; then
-    add_overlay "$WEATHER_LIST" "$LAYOUT_WEATHER_X" "$LAYOUT_WEATHER_Y" "$LAYOUT_WEATHER_W" "$LAYOUT_WEATHER_H"
-fi
+# Builds OVERLAY_INPUTS + FILTER_CHAIN from the layout currently ON DISK.
+# FFmpeg fixes its filter graph at launch, so this has to run before EVERY
+# launch rather than once at boot: "Save & Apply" in the WebUI restarts the
+# encoder precisely so it picks the new positions up, and a graph built at
+# boot would silently re-apply the old ones (encoder restarted, overlay
+# unchanged on air). The same applies to watchdog/freeze restarts and to the
+# BRB screen, which shares these overlays.
+build_filter_chain() {
+    load_overlay_layout
+    OVERLAY_INPUTS=""
+    FILTER_CHAIN="$CAMERA_FILTER"
+    LAST_V="base"
+    INPUT_COUNT=1
+    if [ "$LAYOUT_TL_ENABLED" = "1" ]; then
+        add_overlay "$AD_PLAYLIST_TL" "$LAYOUT_TL_X" "$LAYOUT_TL_Y" "$LAYOUT_TL_W" "$LAYOUT_TL_H"
+    fi
+    if [ "$LAYOUT_TR_ENABLED" = "1" ]; then
+        add_overlay "$AD_PLAYLIST_TR" "$LAYOUT_TR_X" "$LAYOUT_TR_Y" "$LAYOUT_TR_W" "$LAYOUT_TR_H"
+    fi
+    if [ "$WEATHER_ENABLED" = "true" ] && [ "$LAYOUT_WEATHER_ENABLED" = "1" ]; then
+        add_overlay "$WEATHER_LIST" "$LAYOUT_WEATHER_X" "$LAYOUT_WEATHER_Y" "$LAYOUT_WEATHER_W" "$LAYOUT_WEATHER_H"
+    fi
+}
+build_filter_chain
 
 if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
     log "--- Direct YouTube Mode: Single FFmpeg pipeline ---"
 
     run_camera_ffmpeg() {
         local audio_mode="$1"
+        build_filter_chain
+        log "Overlay layout: $(layout_summary)" >&2
         if [ "$HARDWARE_ACCEL" = "true" ]; then
             local final_filters="${FILTER_CHAIN};[${LAST_V}]scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=nv12[soft_final];[soft_final]hwupload[vfinal]"
             local hw_init="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
@@ -719,6 +737,8 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 
     run_fallback_ffmpeg() {
         log "[Fallback] Starting 'We'll Be Right Back' stream (With Overlays)..." >&2
+        build_filter_chain
+        log "Overlay layout: $(layout_summary)" >&2
 
         # Fresh progress file so the Docker healthcheck stays green during
         # camera outages (the BRB encoder keeps it advancing)
@@ -1017,14 +1037,16 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 # ==============================================================================
 else
     if [ "$HARDWARE_ACCEL" = "true" ]; then
-        FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=nv12[soft_final];[soft_final]hwupload[vfinal]"
         HW_INIT="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
         VIDEO_CODEC="-c:v h264_vaapi -b:v $VIDEO_BITRATE -maxrate $VIDEO_BITRATE -bufsize 28M -r $VIDEO_FPS -g $(($VIDEO_FPS * 2))"
     else
-        FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=yuv420p[vfinal]"
         HW_INIT=""
         VIDEO_CODEC="-c:v libx264 -preset $SOFTWARE_PRESET -crf $SOFTWARE_CRF -b:v $VIDEO_BITRATE -maxrate $VIDEO_BITRATE -bufsize 28M -r $VIDEO_FPS -g $(($VIDEO_FPS * 2))"
     fi
+    # The local compositor's PID, so the WebUI's "Apply" can restart the process
+    # that actually draws the overlays (youtube_restreamer.pid is only the
+    # re-streaming leg in this mode).
+    COMPOSITOR_PID_FILE="$WORKDIR/compositor.pid"
 
     # --- YouTube Restreamer (MediaMTX -> YouTube) ---
     # Restored: this second FFmpeg leg (documented in the README since v2.7)
@@ -1102,7 +1124,19 @@ else
         # Local encoder: camera + overlays -> MediaMTX. The -progress file is
         # owned by the YouTube restreamer leg above (that's the stream the
         # watchdog cares about), so it is not written here.
-        ffmpeg -hide_banner -loglevel warning $HW_INIT $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$FINAL_FILTERS" -map "[vfinal]" -map 0:a? $VIDEO_CODEC -c:a copy -f rtsp -rtsp_transport tcp "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live"
+        # The graph is rebuilt from disk on every launch - see build_filter_chain.
+        build_filter_chain
+        log "Overlay layout: $(layout_summary)"
+        if [ "$HARDWARE_ACCEL" = "true" ]; then
+            FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=nv12[soft_final];[soft_final]hwupload[vfinal]"
+        else
+            FINAL_FILTERS="${FILTER_CHAIN};[${LAST_V}]format=yuv420p[vfinal]"
+        fi
+        ffmpeg -hide_banner -loglevel warning $HW_INIT $RTSP_INPUT_OPTS $OVERLAY_INPUTS -filter_complex "$FINAL_FILTERS" -map "[vfinal]" -map 0:a? $VIDEO_CODEC -c:a copy -f rtsp -rtsp_transport tcp "rtsp://$ADMIN_USER:$ADMIN_PASS@localhost:8554/live" &
+        COMPOSITOR_PID=$!
+        echo $COMPOSITOR_PID > "$COMPOSITOR_PID_FILE"
+        wait $COMPOSITOR_PID
+        rm -f "$COMPOSITOR_PID_FILE"
         log "FFmpeg exited, restarting in 5 seconds..."
         sleep 5
     done

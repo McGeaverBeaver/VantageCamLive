@@ -325,6 +325,17 @@ def parse_progress():
 
 RESTART_HOLD_FILE = os.path.join(CONFIG_DIR, "restart_hold")
 STREAM_PAUSED_FILE = os.path.join(CONFIG_DIR, "stream_paused")
+# MediaMTX mode only: the local encoder that composes the overlays. In that
+# mode youtube_restreamer.pid is just the re-streaming leg, which draws nothing.
+COMPOSITOR_PID_FILE = os.path.join(CONFIG_DIR, "compositor.pid")
+
+
+def get_compositor_pid():
+    try:
+        pid = int(read_text(COMPOSITOR_PID_FILE, "0"))
+    except ValueError:
+        return None
+    return pid if pid > 0 and pid_is_ffmpeg(pid) else None
 
 
 def broadcast_is_paused():
@@ -361,20 +372,29 @@ def start_broadcast():
 
 
 def signal_broadcast_restart(reason):
-    """Ask start.sh's supervision loop to restart the broadcast FFmpeg."""
-    pid = get_broadcast_pid()
-    if pid is None:
+    """Ask start.sh's supervision loop to restart the encoder(s).
+
+    start.sh rebuilds the FFmpeg filter graph from the layout on disk before
+    every launch, so this is also how a saved overlay layout reaches the air.
+    In MediaMTX mode the overlays are drawn by a separate local compositor, so
+    that process is signalled as well - restarting only the YouTube leg would
+    change nothing visible.
+    """
+    targets = [(p, name) for p, name in ((get_broadcast_pid(), "broadcast"),
+                                          (get_compositor_pid(), "compositor")) if p]
+    if not targets:
         return False, "No running broadcast FFmpeg process found"
     try:
         # A short hold marks this as a managed restart so the supervisor skips
         # the fallback-screen detour and respawns in normal mode right away.
         with open(RESTART_HOLD_FILE, "w") as f:
             f.write(str(int(time.time()) + 2))
-        os.kill(pid, signal.SIGTERM)
-        log(f"Sent SIGTERM to broadcast ffmpeg pid {pid} ({reason})")
-        return True, f"Restart signal sent to PID {pid}"
+        for pid, name in targets:
+            os.kill(pid, signal.SIGTERM)
+            log(f"Sent SIGTERM to {name} ffmpeg pid {pid} ({reason})")
+        return True, "Restart signal sent to " + ", ".join(f"{n} PID {p}" for p, n in targets)
     except OSError as e:
-        return False, f"Failed to signal PID {pid}: {e}"
+        return False, f"Failed to signal FFmpeg: {e}"
 
 
 def set_audio_mode(mode):
@@ -1554,17 +1574,20 @@ class AdminHandler(BaseHTTPRequestHandler):
             f"{k}={v['w']}x{v['h']}@{v['x']},{v['y']}{'' if v['enabled'] else ' (off)'}"
             for k, v in saved.items()))
 
-        # The filter graph is fixed at launch, so both pipelines must be
-        # restarted to pick up new positions. The preview restarts on its own
-        # (next start rebuilds the chain); the broadcast only if asked, since
-        # that briefly interrupts the live stream.
+        # FFmpeg fixes its filter graph at launch, so both pipelines must be
+        # restarted to pick up new positions; each rebuilds its graph from the
+        # file just written. The preview restarts on its own (next start
+        # rebuilds the chain); the broadcast only if asked, since that briefly
+        # interrupts the live stream.
         preview.stop()
         applied = False
         detail = "Saved. Restart the stream to apply it on air."
         if (query.get("apply") or [""])[0].lower() in ("1", "true", "yes"):
             ok, msg = signal_broadcast_restart("overlay layout change")
             applied = ok
-            detail = msg if ok else f"Saved, but the broadcast could not be restarted: {msg}"
+            detail = ("Saved and applied - the encoder is relaunching with the new layout "
+                      "(a few seconds of interruption on air)." if ok
+                      else f"Saved, but the broadcast could not be restarted: {msg}")
 
         self.send_json({"ok": True, "applied": applied, "message": detail,
                         "overlays": saved})
