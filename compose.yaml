@@ -85,6 +85,21 @@ services:
       # Default: 900 (15 Minutes)
       - ALERTS_UPDATE_INTERVAL=900
 
+      # --- MQTT / HOME ASSISTANT (optional) ---
+      # Set MQTT_HOST to enable the bridge. Home Assistant then discovers an
+      # "Away" switch, a "Scene" selector and an "On Air" sensor by itself.
+      # Taking a scene to air does NOT restart the encoder, so viewers see the
+      # card within about a second and YouTube never sees a disconnect.
+      # - MQTT_HOST=192.168.1.10
+      # - MQTT_PORT=1883
+      # - MQTT_USER=vantagecam
+      # - MQTT_PASS=change_me
+      # - MQTT_TLS=false
+      # - MQTT_PREFIX=vantagecam        # give each camera its own prefix
+      # - MQTT_DISCOVERY=true
+      # - MQTT_DISCOVERY_PREFIX=homeassistant
+      # - MQTT_DEVICE_NAME=Lake Simcoe Cam
+
       # --- AUDIO CONTROL API (port 9998) ---
       # Require an X-API-Key header on the mute/unmute/music endpoints.
       # Unset = no auth, so keep port 9998 on your LAN.

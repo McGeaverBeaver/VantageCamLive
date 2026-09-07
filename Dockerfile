@@ -4,7 +4,7 @@ FROM alpine:3.19
 ARG INCLUDE_INTEL=true
 ARG ARCH=amd64
 ARG MTX_VERSION=v1.15.0
-ARG VERSION=2.11.1
+ARG VERSION=2.12.0
 
 # Image metadata
 LABEL maintainer="McGeaverBeaver"
@@ -48,7 +48,8 @@ ENV LIBVA_DRIVER_NAME=iHD
 RUN pip3 install --break-system-packages --no-cache-dir \
     "requests>=2.31,<3" \
     "Pillow>=10.0,<13" \
-    "env_canada==0.19.1"
+    "env_canada==0.19.1" \
+    "paho-mqtt>=1.6,<3"
 
 # 4. Install MediaMTX
 RUN echo "Downloading MediaMTX ${MTX_VERSION} for ${ARCH}..." && \
@@ -71,8 +72,10 @@ COPY youtube_api.py /youtube_api.py
 COPY events.py /events.py
 COPY sponsors.py /sponsors.py
 COPY sun_times.py /sun_times.py
-RUN sed -i 's/\r$//' /start.sh /weather.py /audio_api.py /watchdog.py /admin_api.py /overlay_layout.py /ingest_probe.py /youtube_api.py /events.py /sponsors.py /sun_times.py \
-    && chmod +x /start.sh /watchdog.py /admin_api.py /ingest_probe.py
+COPY scenes.py /scenes.py
+COPY mqtt_bridge.py /mqtt_bridge.py
+RUN sed -i 's/\r$//' /start.sh /weather.py /audio_api.py /watchdog.py /admin_api.py /overlay_layout.py /ingest_probe.py /youtube_api.py /events.py /sponsors.py /sun_times.py /scenes.py /mqtt_bridge.py \
+    && chmod +x /start.sh /watchdog.py /admin_api.py /ingest_probe.py /scenes.py /mqtt_bridge.py
 
 # 6. Create config directory and health check script
 RUN mkdir -p /config /health

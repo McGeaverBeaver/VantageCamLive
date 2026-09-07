@@ -96,6 +96,11 @@ AD_TEMP_TR="$WORKDIR/temp_ad_tr.png"
 AD_PLAYLIST_TR="$WORKDIR/ad_playlist_tr.txt"
 FALLBACK_ENABLED="${FALLBACK_ENABLED:-true}"
 FALLBACK_IMAGE="$WORKDIR/fallback.png"
+# --- SCENES (the "away" cards that can take over without restarting FFmpeg) ---
+SCENE_LAYER_LIST="$WORKDIR/scene_layer.txt"
+PROGRAM_FILE="$WORKDIR/program_state"
+# "live" = camera on air; anything else is a scene id covering the frame.
+scene_on_air() { [ "$(cat "$PROGRAM_FILE" 2>/dev/null || echo live)" != "live" ]; }
 STREAM_MODE_FILE="$WORKDIR/stream_mode"
 MUSIC_DIR="$WORKDIR/music"
 MUSIC_PLAYLIST="$WORKDIR/music_playlist.txt"
@@ -490,7 +495,13 @@ echo -e "file '$AD_FINAL_TR'\nduration 10\nfile '$AD_FINAL_TR'" > "$AD_PLAYLIST_
 
 if [ "$FALLBACK_ENABLED" = "true" ]; then
     log "--- Generating Fallback Screen ---"
-    python3 /weather.py fallback "$FALLBACK_IMAGE" "$YOUTUBE_WIDTH" "$YOUTUBE_HEIGHT" "We'll Be Right Back"
+    # Scenes own the BRB artwork now: scenes.py renders the nominated fallback
+    # scene to $FALLBACK_IMAGE so the operator can restyle it in the WebUI.
+    # weather.py's generator stays as the safety net if that ever fails.
+    if ! python3 /scenes.py init >/dev/null 2>&1 || [ ! -s "$FALLBACK_IMAGE" ]; then
+        log "[Scenes] Scene render unavailable - using the built-in BRB card"
+        python3 /weather.py fallback "$FALLBACK_IMAGE" "$YOUTUBE_WIDTH" "$YOUTUBE_HEIGHT" "We'll Be Right Back"
+    fi
 fi
 # Always reset the mode at boot - a stale "fallback" left from a previous run
 # would make the watchdog skip every recovery (it defers while in fallback).
@@ -631,6 +642,20 @@ fi
 if [ ! -f "/config/audio_mode" ]; then echo "muted" > "/config/audio_mode"; fi
 if [ "$WATCHDOG_ENABLED" = "true" ] && [ -n "$YOUTUBE_KEY" ]; then log "--- Starting Self-Healing Watchdog ---"; python3 /watchdog.py & fi
 
+# --- MQTT bridge (optional): Home Assistant / Node-RED control of the program bus
+# Supervised: the bridge must never be able to take the stream down, and a
+# broker that disappears must not leave the switch dead forever.
+if [ -n "$MQTT_HOST" ]; then
+    log "--- Starting MQTT bridge (broker $MQTT_HOST:${MQTT_PORT:-1883}) ---"
+    (
+        while true; do
+            python3 /mqtt_bridge.py 2>&1 | while IFS= read -r _l; do log "$_l"; done
+            log "[MQTT] bridge exited - restarting in 15s"
+            sleep 15
+        done
+    ) &
+fi
+
 # ==============================================================================
 #  MAIN STREAM ENCODING
 # ==============================================================================
@@ -692,6 +717,16 @@ build_filter_chain() {
     FILTER_CHAIN="$CAMERA_FILTER"
     LAST_V="base"
     INPUT_COUNT=1
+    # Scene layer FIRST: a full-frame 2560x1440 image whose file is swapped
+    # atomically to take an away card to air. Transparent while the camera is
+    # live, so it costs a blend and nothing else. Being first means sponsors and
+    # the weather block still draw on top of an away card.
+    python3 /scenes.py init >/dev/null 2>&1 || true
+    if [ -s "$SCENE_LAYER_LIST" ]; then
+        add_overlay "$SCENE_LAYER_LIST" 0 0 2560 1440
+    else
+        log "[Scenes] scene layer unavailable - on-air switching disabled this run"
+    fi
     if [ "$LAYOUT_TL_ENABLED" = "1" ]; then
         add_overlay "$AD_PLAYLIST_TL" "$LAYOUT_TL_X" "$LAYOUT_TL_Y" "$LAYOUT_TL_W" "$LAYOUT_TL_H"
     fi
@@ -711,6 +746,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
         local audio_mode="$1"
         build_filter_chain
         log "Overlay layout: $(layout_summary)" >&2
+        log "On air: $(cat "$PROGRAM_FILE" 2>/dev/null || echo live)" >&2
         if [ "$HARDWARE_ACCEL" = "true" ]; then
             local final_filters="${FILTER_CHAIN};[${LAST_V}]scale=${YOUTUBE_WIDTH}:${YOUTUBE_HEIGHT},format=nv12[soft_final];[soft_final]hwupload[vfinal]"
             local hw_init="-init_hw_device vaapi=va:$VAAPI_DEVICE -filter_hw_device va"
@@ -965,7 +1001,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
 
             # 3. Connection Health Check (Every 3s)
             if [ $((LOOP_COUNT % 3)) -eq 0 ]; then
-                if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ]; then
+                if [ "$CURRENT_MODE" = "normal" ] && [ "$FALLBACK_ENABLED" = "true" ] && ! scene_on_air; then
                    if ! check_rtsp_basic; then
                        log "[Fallback] RTSP Ping Failed - Killing PID $FFMPEG_PID..."
                        record_event "camera_down" "error" "Camera stopped responding - switching to BRB screen"
@@ -973,7 +1009,7 @@ if [ "$DIRECT_YOUTUBE_MODE" = "true" ]; then
                        break
                    fi
                 fi
-                if [ "$CURRENT_MODE" = "fallback" ]; then
+                if [ "$CURRENT_MODE" = "fallback" ] && ! scene_on_air; then
                    if check_rtsp_basic; then
                        log "[Fallback] RTSP Recovered! Killing BRB Stream (PID $FFMPEG_PID) to switch..."
                        record_event "camera_up" "success" "Camera came back - leaving BRB screen"

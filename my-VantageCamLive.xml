@@ -23,7 +23,10 @@
     - Admin WebUI (port 9999) with live stream preview and broadcast controls&#xD;
     - Simulcast to Facebook / Twitch alongside YouTube&#xD;
     &#xD;
-    v2.11.0: Sunrise/sunset sponsor switching, sponsor scheduling and airtime reports, event timeline, bitrate sparklines, simulcast, and automatic unlisting during outages.</Overview>
+    - Broadcast suite: Program/Preview monitors and switchable "away" scenes&#xD;
+    - MQTT / Home Assistant control of the on-air source&#xD;
+    &#xD;
+    v2.12.0: Scene library with seamless on-air switching (no encoder restart, so YouTube never sees a disconnect), Program/Preview monitors, and MQTT + Home Assistant autodiscovery.</Overview>
   <Category>MediaApp:Video MediaServer:Video</Category>
   <WebUI>http://[IP]:[PORT:9999]/</WebUI>
   <TemplateURL/>
@@ -122,6 +125,17 @@
   <Config Name="Healthy Visibility" Target="HEALTHY_VISIBILITY" Default="public" Mode="" Description="Fallback restore target if the pre-outage visibility cannot be read" Type="Variable" Display="advanced" Required="false" Mask="false">public</Config>
   <Config Name="Outage Grace Seconds" Target="OUTAGE_GRACE_SECONDS" Default="120" Mode="" Description="How long the outage must persist before the broadcast is hidden" Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
   <Config Name="Recovery Grace Seconds" Target="RECOVERY_GRACE_SECONDS" Default="120" Mode="" Description="How long the stream must stay healthy before visibility is restored" Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
+
+  <!-- MQTT / Home Assistant (optional) -->
+  <Config Name="MQTT Broker" Target="MQTT_HOST" Default="" Mode="" Description="Broker address. Setting this enables the MQTT bridge and Home Assistant autodiscovery (an Away switch, a Scene selector and an On Air sensor appear by themselves). Leave empty to disable." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="MQTT Port" Target="MQTT_PORT" Default="1883" Mode="" Description="Broker port" Type="Variable" Display="advanced" Required="false" Mask="false">1883</Config>
+  <Config Name="MQTT User" Target="MQTT_USER" Default="" Mode="" Description="Broker username (leave empty for anonymous brokers)" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="MQTT Password" Target="MQTT_PASS" Default="" Mode="" Description="Broker password" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="MQTT TLS" Target="MQTT_TLS" Default="false" Mode="" Description="Connect to the broker with TLS" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="MQTT Topic Prefix" Target="MQTT_PREFIX" Default="vantagecam" Mode="" Description="Topic prefix. Give each camera its own prefix if you run more than one against the same broker." Type="Variable" Display="advanced" Required="false" Mask="false">vantagecam</Config>
+  <Config Name="MQTT Discovery" Target="MQTT_DISCOVERY" Default="true" Mode="" Description="Publish Home Assistant autodiscovery messages" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="MQTT Discovery Prefix" Target="MQTT_DISCOVERY_PREFIX" Default="homeassistant" Mode="" Description="Home Assistant discovery prefix" Type="Variable" Display="advanced" Required="false" Mask="false">homeassistant</Config>
+  <Config Name="MQTT Device Name" Target="MQTT_DEVICE_NAME" Default="" Mode="" Description="Device name shown in Home Assistant. Defaults to your Weather Location plus 'Live'." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
 
   <!-- Audio API -->
   <Config Name="Audio API Key" Target="AUDIO_API_KEY" Default="" Mode="" Description="API key to secure the audio mute/unmute endpoint" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>

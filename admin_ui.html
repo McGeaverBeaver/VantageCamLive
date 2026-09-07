@@ -122,6 +122,54 @@
   .ev .ev-msg { word-break: break-word; }
 
   /* sponsor schedule rows */
+  /* --- broadcast suite --- */
+  .buses { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 1100px) { .buses { grid-template-columns: 1fr; } }
+  .bus { border: 2px solid var(--border); border-radius: var(--radius); overflow: hidden;
+         background: #000; position: relative; }
+  .bus.pgm { border-color: var(--red); }
+  .bus.pvw { border-color: var(--green); }
+  .bus-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+              background: var(--panel2); border-bottom: 1px solid var(--border); }
+  .bus-tag { font-size: 11px; font-weight: 800; letter-spacing: .1em; padding: 2px 8px;
+             border-radius: 4px; color: #fff; }
+  .bus.pgm .bus-tag { background: var(--red); }
+  .bus.pvw .bus-tag { background: var(--green); color: #06240f; }
+  .bus-what { font-weight: 600; font-size: 13px; }
+  .bus-img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: contain; background: #000; }
+  .bus-msg { position: absolute; inset: auto 0 0 0; padding: 8px 10px; font-size: 12px;
+             background: rgba(0,0,0,.65); color: var(--muted); }
+  .bus-empty { display: none; aspect-ratio: 16/9; align-items: center; justify-content: center;
+               text-align: center; padding: 20px; color: var(--muted); font-size: 13px;
+               background: repeating-linear-gradient(45deg, #0a0a0a, #0a0a0a 12px, #111 12px, #111 24px); }
+  .bus.empty .bus-img { display: none; }
+  .bus.empty .bus-empty { display: flex; }
+  .take-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+              margin-top: 14px; padding: 12px; background: var(--panel2);
+              border: 1px solid var(--border); border-radius: var(--radius); }
+  button.take { background: var(--red); border-color: var(--red); color: #fff;
+                font-weight: 800; font-size: 15px; padding: 12px 30px; letter-spacing: .06em; }
+  button.take:hover { filter: brightness(1.15); }
+  button.take.to-live { background: var(--green); border-color: var(--green); color: #06240f; }
+  .scene-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .scene-card { border: 2px solid var(--border); border-radius: var(--radius); overflow: hidden;
+                background: var(--panel2); cursor: pointer; text-align: left; padding: 0; }
+  .scene-card:hover { border-color: var(--accent); }
+  .scene-card.on-air { border-color: var(--red); }
+  .scene-card.previewing { border-color: var(--green); }
+  .scene-card img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; background:#000; }
+  .scene-card .sc-body { padding: 8px 10px; }
+  .scene-card .sc-name { font-weight: 700; font-size: 13px; }
+  .scene-card .sc-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+  .sc-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--border);
+              color: var(--muted); }
+  .sc-badge.air { background: rgba(248,81,73,.15); border-color: var(--red); color: var(--red); }
+  .sc-badge.away { background: rgba(88,166,255,.15); border-color: var(--accent); color: var(--accent); }
+  .sc-badge.fault { background: rgba(210,153,34,.15); border-color: var(--orange); color: var(--orange); }
+  .scene-form { display: grid; grid-template-columns: 150px 1fr; gap: 10px 12px; align-items: center; }
+  .scene-form .full { grid-column: 1 / -1; }
+  .scene-form input[type=color] { width: 54px; height: 32px; padding: 2px; }
+  .scene-form label { color: var(--muted); font-size: 12.5px; }
   .daynight { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
               padding: 10px 12px; background: var(--panel2); border: 1px solid var(--border);
               border-radius: 8px; font-size: 12.5px; }
@@ -263,6 +311,7 @@
   <button id="menuBtn" aria-label="Menu">&#9776;</button>
   <div class="brand">&#128249; VantageCam <span>Admin</span></div>
   <div class="pills">
+    <span class="pill" id="pillOnAir">…</span>
     <span class="pill" id="pillStream">…</span>
     <span class="pill" id="pillMode">…</span>
     <span class="pill" id="pillCamera">…</span>
@@ -274,6 +323,7 @@
 <nav id="sidebar">
   <button class="nav-item active" data-view="dashboard"><span class="ico">&#128202;</span> Dashboard</button>
   <div class="nav-sep">Production</div>
+  <button class="nav-item" data-view="broadcast"><span class="ico">&#127909;</span> Broadcast</button>
   <button class="nav-item" data-view="layout"><span class="ico">&#128207;</span> Overlay Layout</button>
   <button class="nav-item" data-view="sponsors"><span class="ico">&#128226;</span> Sponsors</button>
   <button class="nav-item" data-view="schedule"><span class="ico">&#128197;</span> Schedule &amp; Airtime</button>
@@ -363,6 +413,99 @@
         <button id="btnEventsRefresh">&#8635;</button></div>
       <div class="panel-body"><div class="events" id="eventList">
         <span class="muted">No events recorded yet.</span></div></div>
+    </div>
+  </section>
+
+  <!-- ============ BROADCAST ============ -->
+  <section class="view" id="view-broadcast">
+    <div class="view-head"><h1>Broadcast</h1>
+      <p>Program is what viewers see right now. Preview is what a take would put there.
+         Switching does not restart the encoder, so YouTube never sees a disconnect.</p></div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>&#127909; Program &amp; Preview</h2>
+        <span class="spacer"></span>
+        <span class="muted" id="busHint"></span>
+        <button id="btnBusRefresh">&#8635;</button>
+      </div>
+      <div class="panel-body">
+        <div class="buses">
+          <div class="bus pgm">
+            <div class="bus-head"><span class="bus-tag">PROGRAM</span>
+              <span class="bus-what" id="pgmWhat">&hellip;</span></div>
+            <img class="bus-img" id="pgmImg" alt="">
+            <div class="bus-empty" id="pgmEmpty">No program image.</div>
+            <div class="bus-msg" id="pgmMsg"></div>
+          </div>
+          <div class="bus pvw">
+            <div class="bus-head"><span class="bus-tag">PREVIEW</span>
+              <span class="bus-what" id="pvwWhat">&hellip;</span>
+              <span class="spacer"></span>
+              <select id="pvwPick" title="What to line up on the preview bus"></select></div>
+            <img class="bus-img" id="pvwImg" alt="">
+            <div class="bus-empty" id="pvwEmpty">No preview image.</div>
+            <div class="bus-msg" id="pvwMsg"></div>
+          </div>
+        </div>
+        <div class="take-row">
+          <button id="btnTake" class="take">&#9654; TAKE</button>
+          <span class="muted" id="takeHint">Puts the Preview source on air.</span>
+          <span class="spacer"></span>
+          <button id="btnTakeLive">&#128247; Camera</button>
+          <button id="btnTakeAway">&#9208; Away</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>&#127916; Scenes</h2>
+        <span class="muted">click a card to line it up on Preview</span>
+        <span class="spacer"></span>
+        <button id="btnSceneNew" class="primary">+ New scene</button>
+      </div>
+      <div class="panel-body"><div class="scene-grid" id="sceneGrid"></div></div>
+    </div>
+
+    <div class="panel" id="sceneEditorPanel" style="display:none">
+      <div class="panel-head"><h2>&#9999; Edit scene</h2>
+        <span class="muted" id="sceneEditId"></span>
+        <span class="spacer"></span>
+        <button id="btnSceneClose">Close</button>
+      </div>
+      <div class="panel-body">
+        <div class="scene-form">
+          <label for="scName">Name</label><input id="scName" maxlength="60">
+          <label for="scHeadline">Headline</label><input id="scHeadline" maxlength="80">
+          <label for="scSubtitle">Subtitle</label><input id="scSubtitle" maxlength="160">
+          <label for="scBg">Background colour</label>
+          <div><input type="color" id="scBg"> <span class="muted">used when no image is set</span></div>
+          <label for="scText">Text colour</label><input type="color" id="scText">
+          <label for="scAccent">Accent colour</label><input type="color" id="scAccent">
+          <label for="scBackground">Background image</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <select id="scBackground"></select>
+            <input type="file" id="scBgFile" accept="image/png,image/jpeg,image/webp" style="max-width:230px">
+            <button id="btnScBgUpload">Upload</button>
+          </div>
+          <label>Show</label>
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <label><input type="checkbox" id="scLocation"> location name</label>
+            <label><input type="checkbox" id="scClock"> clock</label>
+          </div>
+          <div class="full" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button id="btnSceneSave" class="primary">&#128190; Save scene</button>
+            <button id="btnSceneAway">Use as the Away card</button>
+            <button id="btnSceneFallback">Use for camera failure</button>
+            <span class="spacer"></span>
+            <button id="btnSceneDelete" class="danger">Delete</button>
+          </div>
+          <p class="muted full" style="margin:0">
+            Saving re-renders the card. If it is on air the change appears within about a second,
+            with no interruption. The camera-failure card is also what viewers see if the camera
+            drops while you are away.
+          </p>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -547,7 +690,7 @@ function esc(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&
 function kv(rows) { return rows.map(([k,v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join(""); }
 
 // ---------- navigation ----------
-const VIEWS = ["dashboard","layout","sponsors","schedule","weather","audio","diagnostics","logs","settings"];
+const VIEWS = ["dashboard","broadcast","layout","sponsors","schedule","weather","audio","diagnostics","logs","settings"];
 function showView(name) {
   if (!VIEWS.includes(name)) name = "dashboard";
   VIEWS.forEach(v => $("view-"+v).classList.toggle("active", v === name));
@@ -564,7 +707,8 @@ function lazyLoad(name) {
     return;
   }
   loaded[name] = true;
-  if (name === "sponsors") loadAds();
+  if (name === "broadcast") loadScenes();
+  else if (name === "sponsors") loadAds();
   else if (name === "schedule") loadSchedule();
   else if (name === "weather") loadOverlays();
   else if (name === "logs") loadLog();
@@ -589,6 +733,7 @@ async function refreshStatus() {
 function renderStatus(s) {
   const st = s.stream, cam = s.camera, aud = s.audio, wd = s.watchdog, sys = s.system, pv = s.preview;
   renderDayNight(s.day_night);
+  renderOnAirPill(s.program);
 
   const pillStream = $("pillStream");
   if (st.paused) {
@@ -1159,6 +1304,236 @@ async function loadEvents() {
 }
 $("btnEventsRefresh").addEventListener("click", loadEvents);
 
+// The single most important fact on the page: is the camera on air, or a card?
+function renderOnAirPill(prog) {
+  const el = $("pillOnAir");
+  if (!el) return;
+  if (!prog || !prog.program) { el.textContent = "ON AIR ?"; el.className = "pill"; return; }
+  const camera = prog.program === "live";
+  el.textContent = camera ? "ON AIR: CAMERA" : "ON AIR: " + prog.program_name.toUpperCase();
+  el.className = "pill " + (camera ? "live" : "warn");
+  el.title = camera ? "Viewers are seeing the camera feed."
+                    : "Viewers are seeing an away card, not the camera.";
+}
+
+// ---------- broadcast: program / preview buses + scenes ----------
+let sceneState = null;
+let editingScene = null;
+
+function sceneLabel(id) {
+  if (id === "live") return "Camera";
+  const sc = sceneState && sceneState.scenes[id];
+  return sc ? sc.name : id;
+}
+
+async function loadScenes() {
+  try {
+    const r = await api("/api/scenes");
+    sceneState = r.scenes_state;
+    renderBuses();
+    renderSceneGrid();
+    renderPvwPicker();
+    if (editingScene && !sceneState.scenes[editingScene]) closeSceneEditor();
+  } catch (e) { toast("Scenes unavailable: " + e.message, true); }
+}
+
+// Program monitor: the live MJPEG preview already composes the scene layer,
+// so when it is running it IS the program bus. Otherwise fall back to a
+// composited still so the operator still sees what is going out.
+function renderBuses() {
+  if (!sceneState) return;
+  const onAirScene = sceneState.program !== "live";
+  $("pgmWhat").textContent = sceneLabel(sceneState.program);
+  $("pvwWhat").textContent = sceneLabel(sceneState.preview);
+  // A failed image must read as a deliberate empty state, not a broken page.
+  function feed(busEl, img, msgEl, emptyEl, src, okMsg, failMsg) {
+    img.onload = () => { busEl.classList.remove("empty"); msgEl.textContent = okMsg; };
+    img.onerror = () => { busEl.classList.add("empty"); emptyEl.textContent = failMsg;
+                          msgEl.textContent = ""; };
+    img.src = src;
+  }
+  const live = statusData && statusData.preview && statusData.preview.running;
+  const pgmBus = $("pgmImg").closest(".bus");
+  if (live) {
+    // The MJPEG preview already composes the scene layer, so it IS the program bus
+    if (!$("pgmImg").src.includes("/api/preview/stream")) {
+      feed(pgmBus, $("pgmImg"), $("pgmMsg"), $("pgmEmpty"),
+           "/api/preview/stream?t=" + Date.now(),
+           "Live preview pipeline - exactly what is being encoded.",
+           "Preview pipeline is not producing frames.");
+    }
+  } else {
+    feed(pgmBus, $("pgmImg"), $("pgmMsg"), $("pgmEmpty"),
+         "/api/program/still?bus=pgm&t=" + Date.now(),
+         onAirScene ? "Composited still. The away card is on air."
+                    : "Composited still. Start the preview on the Dashboard for live motion.",
+         onAirScene ? "Away card is on air, but its still could not be rendered."
+                    : "Camera unreachable, so there is no program still to show.");
+  }
+  const pvwBus = $("pvwImg").closest(".bus");
+  feed(pvwBus, $("pvwImg"), $("pvwMsg"), $("pvwEmpty"),
+       "/api/program/still?bus=pvw&t=" + Date.now(),
+       sceneState.preview === "live" ? "Camera, composited with the current overlays."
+                                     : "Away card, composited with the current overlays.",
+       sceneState.preview === "live" ? "Camera unreachable - no snapshot to preview."
+                                     : "That scene card could not be rendered.");
+  const btn = $("btnTake");
+  btn.classList.toggle("to-live", sceneState.preview === "live");
+  btn.innerHTML = "&#9654; TAKE " + esc(sceneLabel(sceneState.preview)).toUpperCase();
+  $("takeHint").textContent = "Puts " + sceneLabel(sceneState.preview) +
+    " on air. No encoder restart, no dropout.";
+  $("busHint").textContent = "on air: " + sceneLabel(sceneState.program);
+}
+
+function renderPvwPicker() {
+  const sel = $("pvwPick");
+  const cur = sceneState.preview;
+  sel.innerHTML = '<option value="live">Camera</option>' +
+    Object.keys(sceneState.scenes).sort().map(id =>
+      `<option value="${esc(id)}">${esc(sceneState.scenes[id].name)}</option>`).join("");
+  sel.value = cur;
+}
+
+function renderSceneGrid() {
+  const g = $("sceneGrid");
+  const ids = Object.keys(sceneState.scenes).sort();
+  g.innerHTML = ids.map(id => {
+    const sc = sceneState.scenes[id];
+    const badges = [];
+    if (sceneState.program === id) badges.push('<span class="sc-badge air">ON AIR</span>');
+    if (sceneState.away_scene === id) badges.push('<span class="sc-badge away">away switch</span>');
+    if (sceneState.fallback_scene === id) badges.push('<span class="sc-badge fault">camera failure</span>');
+    const cls = sceneState.program === id ? "on-air" : (sceneState.preview === id ? "previewing" : "");
+    return `<button class="scene-card ${cls}" data-scene="${esc(id)}">
+        <img src="/api/scenes/card?id=${encodeURIComponent(id)}&t=${Date.now()}" alt="">
+        <div class="sc-body"><div class="sc-name">${esc(sc.name)}</div>
+        <div class="sc-tags">${badges.join("")}</div></div></button>`;
+  }).join("");
+  g.querySelectorAll(".scene-card").forEach(el => {
+    el.addEventListener("click", () => setPreviewBus(el.dataset.scene));
+    el.addEventListener("dblclick", () => openSceneEditor(el.dataset.scene));
+  });
+}
+
+async function setPreviewBus(target) {
+  try {
+    const r = await api("/api/program/preview", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target }) });
+    sceneState = r.scenes_state; renderBuses(); renderSceneGrid(); renderPvwPicker();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function take(target) {
+  try {
+    const r = await api("/api/program", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target }) });
+    sceneState = r.scenes_state;
+    toast(r.message);
+    // Update the header pill from the take's own response rather than waiting
+    // for the next 3s status poll - otherwise it contradicts the monitors.
+    renderOnAirPill({ program: sceneState.program, program_name: sceneState.program_name });
+    renderBuses(); renderSceneGrid(); renderPvwPicker(); loadEvents();
+  } catch (e) { toast(e.message, true); }
+}
+
+$("btnTake").addEventListener("click", () => take(sceneState.preview));
+$("btnTakeLive").addEventListener("click", () => take("live"));
+$("btnTakeAway").addEventListener("click", () => take("away"));
+$("btnBusRefresh").addEventListener("click", () => { loadScenes(); });
+$("pvwPick").addEventListener("change", e => setPreviewBus(e.target.value));
+
+// ---------- scene editor ----------
+function openSceneEditor(id) {
+  const sc = sceneState.scenes[id];
+  if (!sc) return;
+  editingScene = id;
+  $("sceneEditorPanel").style.display = "";
+  $("sceneEditId").textContent = "id: " + id;
+  $("scName").value = sc.name; $("scHeadline").value = sc.headline;
+  $("scSubtitle").value = sc.subtitle; $("scBg").value = sc.bg_color;
+  $("scText").value = sc.text_color; $("scAccent").value = sc.accent_color;
+  $("scLocation").checked = !!sc.show_location; $("scClock").checked = !!sc.show_clock;
+  const bgSel = $("scBackground");
+  bgSel.innerHTML = '<option value="">(none - use colour)</option>' +
+    (sceneState.backgrounds || []).map(n =>
+      `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+  bgSel.value = sc.background || "";
+  $("sceneEditorPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+function closeSceneEditor() { editingScene = null; $("sceneEditorPanel").style.display = "none"; }
+$("btnSceneClose").addEventListener("click", closeSceneEditor);
+
+$("btnSceneNew").addEventListener("click", async () => {
+  const name = prompt("Name for the new scene (e.g. Back at 9am)");
+  if (!name) return;
+  const id = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  if (!id) { toast("That name has no usable letters or digits.", true); return; }
+  try {
+    const r = await api("/api/scenes/save", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, scene: { name, headline: name } }) });
+    sceneState = r.scenes_state; renderSceneGrid(); renderPvwPicker(); renderBuses();
+    openSceneEditor(id); toast(r.message);
+  } catch (e) { toast(e.message, true); }
+});
+
+async function saveScene() {
+  if (!editingScene) return;
+  const scene = {
+    name: $("scName").value, headline: $("scHeadline").value, subtitle: $("scSubtitle").value,
+    bg_color: $("scBg").value, text_color: $("scText").value, accent_color: $("scAccent").value,
+    background: $("scBackground").value,
+    show_location: $("scLocation").checked, show_clock: $("scClock").checked,
+  };
+  try {
+    const r = await api("/api/scenes/save", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: editingScene, scene }) });
+    sceneState = r.scenes_state; toast(r.message);
+    renderSceneGrid(); renderBuses(); renderPvwPicker();
+  } catch (e) { toast(e.message, true); }
+}
+$("btnSceneSave").addEventListener("click", saveScene);
+
+async function sceneRole(path, label) {
+  if (!editingScene) return;
+  try {
+    const r = await api(path, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: editingScene }) });
+    sceneState = r.scenes_state; toast(r.message); renderSceneGrid(); renderBuses();
+  } catch (e) { toast(e.message, true); }
+}
+$("btnSceneAway").addEventListener("click", () => sceneRole("/api/scenes/away"));
+$("btnSceneFallback").addEventListener("click", () => sceneRole("/api/scenes/fallback"));
+
+$("btnSceneDelete").addEventListener("click", async () => {
+  if (!editingScene) return;
+  if (!confirm(`Delete the scene "${sceneState.scenes[editingScene].name}"?`)) return;
+  try {
+    const r = await api("/api/scenes/delete", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: editingScene }) });
+    sceneState = r.scenes_state; toast(r.message); closeSceneEditor();
+    renderSceneGrid(); renderBuses(); renderPvwPicker();
+  } catch (e) { toast(e.message, true); }
+});
+
+$("btnScBgUpload").addEventListener("click", async () => {
+  const f = $("scBgFile").files[0];
+  if (!f) { toast("Choose an image first.", true); return; }
+  const fd = new FormData(); fd.append("file", f);
+  try {
+    const res = await fetch("/api/scenes/background", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+    sceneState = data.scenes_state;
+    if (editingScene) {
+      const keep = editingScene; openSceneEditor(keep);
+      $("scBackground").value = data.background;
+    }
+    toast(data.message); renderSceneGrid();
+  } catch (e) { toast("Upload failed: " + e.message, true); }
+});
+
 // ---------- day / night ----------
 function renderDayNight(dn) {
   const el = $("dayNight");
@@ -1236,7 +1611,13 @@ showView(location.hash.slice(1) || "dashboard");
 refreshStatus();
 loadMetrics();
 loadEvents();
+loadScenes();
 setInterval(refreshStatus, 3000);
+// The bus monitors are stills, so they need their own refresh. Only while the
+// Broadcast view is actually open - no point compositing frames nobody sees.
+setInterval(() => {
+  if ($("view-broadcast").classList.contains("active")) { loadScenes(); }
+}, 5000);
 setInterval(() => { if ($("view-dashboard").classList.contains("active")) { loadMetrics(); loadEvents(); } }, 10000);
 setInterval(() => { if ($("view-weather").classList.contains("active")) loadOverlays(); }, 60000);
 </script>

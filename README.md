@@ -1,4 +1,4 @@
-# VantageCam Live v2.11.1
+# VantageCam Live v2.12.0
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker Build](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml/badge.svg)](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml)
@@ -20,7 +20,7 @@ Transform a standard security camera feed into a professional broadcast without 
 ## 📋 Table of Contents
 
 - [Key Features](#-key-features)
-- [What's New in v2.11.0](#-whats-new-in-v2110)
+- [What's New in v2.12.0](#-whats-new-in-v2120)
 - [Admin WebUI & Stream Preview](#-admin-webui--stream-preview)
 - [Stream Won't Start?](#-stream-wont-start)
 - [Getting Started](#-getting-started)
@@ -60,6 +60,12 @@ Transform a standard security camera feed into a professional broadcast without 
 - **Music Streaming** — Play background music from MP3 playlist instead of camera audio
 - **Simulcast** — Push the same encode to Facebook/Twitch/anything RTMP alongside YouTube
 
+### Broadcast Suite *(v2.12+)*
+- **Program / Preview monitors** — see what is on air and what a take would put there
+- **Away scenes** — a library of editable cards, switched on demand, not just on failure
+- **Seamless switching** — the encoder never restarts, so YouTube never sees a disconnect
+- **MQTT + Home Assistant** — an Away switch and scene selector appear automatically
+
 ### Broadcast Operations *(v2.10+)*
 - **Admin WebUI** — One-page dashboard with live preview, start/stop, and visibility control
 - **Solar Day/Night** — Sponsor rotation follows real sunrise/sunset, not a fixed clock
@@ -75,6 +81,86 @@ Transform a standard security camera feed into a professional broadcast without 
 - **Exponential Backoff** — Smart retry delays prevent hammering YouTube
 - **Auto-PUBLIC** — Restores stream visibility after recovery via YouTube API
 - **Discord Alerts** — Instant notifications for offline/recovery/errors
+
+---
+
+## 🚀 What's New in v2.12.0
+
+### 🎬 A Broadcast Suite, Not Just a Failure Screen
+
+The "We'll Be Right Back" screen used to appear only when the camera broke. Now it is a
+proper **scene library** you can cut to whenever you like — a lunch break, a private event,
+the off-season — and the whole thing is built for a channel that never goes off air.
+
+**Program and Preview.** The Broadcast page carries two monitors, like a vision mixer.
+**Program** (red) is what viewers are seeing right now. **Preview** (green) is what a take
+would put there, composited with the live sponsor and weather overlays so you see exactly
+what you are about to cut to. Press **TAKE** and the buses swap, so Preview immediately
+shows what you would cut back to.
+
+**Switching never restarts the encoder.** This is the important part. The pipeline carries a
+full-frame *scene layer* that is transparent while the camera is live:
+
+```
+camera ──▶ [scene layer] ──▶ sponsors ──▶ weather ──▶ encoder ──▶ YouTube
+                 ▲
+        swapped atomically on take
+```
+
+Taking a scene to air swaps one PNG on disk. FFmpeg keeps running, the RTMP session stays
+up, and the change lands in about a second. Nothing reconnects, so YouTube never sees the
+disconnects that end a 24/7 broadcast. Measured cost of carrying the layer is a few percent
+of one core.
+
+**Scenes are edited in the WebUI**, the same way sponsor logos are: headline, subtitle,
+colours, an optional uploaded background image, and whether to show the location and clock.
+Two scenes carry special roles you assign:
+
+| Role | When it airs |
+|:-----|:-------------|
+| **Away card** | What the MQTT/Home Assistant switch and the Away button take to air |
+| **Camera-failure card** | What viewers see automatically if the camera becomes unreachable |
+
+Keeping those separate matters: a scheduled break should not tell viewers you are having
+technical difficulties.
+
+**Sponsors and weather keep running** over an away card, so advertisers stay visible and
+airtime keeps accruing while you are away.
+
+**A camera blip no longer churns the stream.** While a scene is on air the supervisor stops
+flipping the encoder in and out of fallback mode — viewers are looking at a card either way,
+so there is nothing to gain from a reconnect.
+
+### 🏠 MQTT and Home Assistant
+
+Set `MQTT_HOST` and the container publishes Home Assistant autodiscovery. A device appears
+by itself with an **Away** switch, a **Scene** selector and an **On Air** sensor — no YAML.
+
+```yaml
+- MQTT_HOST=192.168.1.10
+- MQTT_USER=vantagecam
+- MQTT_PASS=your_password
+```
+
+It works with any broker, not just Home Assistant:
+
+| Topic | Direction | Payload |
+|:------|:----------|:--------|
+| `vantagecam/program/set` | in | `live`, `away`, `toggle`, `on`, `off`, or a scene id |
+| `vantagecam/scene/set` | in | a scene's display name, or its id |
+| `vantagecam/program/state` | out (retained) | `live` or the scene id on air |
+| `vantagecam/scene/state` | out (retained) | `Camera` or the scene name |
+| `vantagecam/availability` | out (retained) | `online` / `offline` (last will) |
+
+State is published whichever way it changed, so a take in the WebUI updates Home Assistant
+within a second and vice versa. Unknown payloads are logged and ignored — a bad automation
+cannot take the stream down.
+
+### 🕹️ Also new
+- **`POST /api/program`** takes a bus to air; `{"target":"toggle"}` is enough for a bookmark
+  or a phone shortcut if you would rather not use MQTT.
+- **On-air pill** in the header, on every page: `ON AIR: CAMERA` or the scene name.
+- The camera-failure card is now a scene you can restyle, instead of being hardcoded.
 
 ---
 
@@ -319,6 +405,15 @@ bottom-right, identical scaling) and serves it as MJPEG to your browser.
 | `/api/sponsors?days=N` | GET | Per-logo schedule, impressions and airtime |
 | `/api/sponsors/report.csv?days=N` | GET | The same report as a CSV download |
 | `/api/sponsors/schedule` | POST | Set a logo's enable flag, run dates and note |
+| `/api/scenes` | GET | Scene library plus the program/preview bus state |
+| `/api/scenes/save` | POST | Create or update a scene (re-renders its card) |
+| `/api/scenes/delete` | POST | Delete a scene (refused while it is on air) |
+| `/api/scenes/away` \| `/api/scenes/fallback` | POST | Assign the away / camera-failure roles |
+| `/api/scenes/background` | POST | Upload a background image for scenes |
+| `/api/scenes/card?id=` | GET | A scene's rendered 2560×1440 card |
+| `/api/program` | POST | Take to air: `live`, `away`, `toggle`, or a scene id |
+| `/api/program/preview` | POST | Line a source up on the Preview bus |
+| `/api/program/still?bus=pgm\|pvw` | GET | Composited still of either bus |
 
 ---
 
@@ -990,6 +1085,24 @@ Requires the YouTube API credentials above.
 |:---------|:--------|:------------|
 | `AUDIO_API_KEY` | - | Require `X-API-Key` on the audio endpoints (port 9998). Unset means no auth — keep the port on your LAN. |
 
+### MQTT / Home Assistant
+
+Entirely optional — with `MQTT_HOST` unset the bridge never starts.
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `MQTT_HOST` | - | Broker address. Setting this enables the bridge. |
+| `MQTT_PORT` | `1883` | Broker port |
+| `MQTT_USER` | - | Broker username (leave unset for anonymous brokers) |
+| `MQTT_PASS` | - | Broker password |
+| `MQTT_TLS` | `false` | Connect with TLS |
+| `MQTT_PREFIX` | `vantagecam` | Topic prefix — change it if you run more than one camera |
+| `MQTT_DISCOVERY` | `true` | Publish Home Assistant autodiscovery |
+| `MQTT_DISCOVERY_PREFIX` | `homeassistant` | Home Assistant's discovery prefix |
+| `MQTT_DEVICE_NAME` | `<WEATHER_LOCATION> Live` | Device name shown in Home Assistant |
+
+*Run two cameras against one broker by giving each its own `MQTT_PREFIX`.*
+
 ---
 
 ## 🎛️ Audio Control API
@@ -1100,6 +1213,21 @@ The playlist plays all MP3 files in alphabetical order, then loops back to the b
 ---
 
 ## 📜 Changelog
+
+### v2.12.0 - Broadcast Suite: scenes, Program/Preview, MQTT
+
+**New Features:**
+- **Scene library** — named, editable away cards (headline, subtitle, colours, background image, location, clock) managed in the WebUI, stored in `/config/scenes.json` and rendered to `/config/scenes/<id>.png`.
+- **Seamless on-air switching** — a full-frame scene layer in the filter graph is swapped atomically, so taking a card to air does not restart FFmpeg or drop the RTMP session. Verified against real FFmpeg: same PID across repeated takes, no stderr.
+- **Program / Preview monitors** — vision-mixer layout with a TAKE button; the buses swap on take. The Preview bus is composited in Pillow from the same overlay PNGs and layout the encoder uses, so it costs no extra encoder.
+- **Distinct away and camera-failure cards** — a scheduled break no longer claims a technical fault. Each role is assigned to a scene of your choice.
+- **MQTT bridge with Home Assistant autodiscovery** — an Away switch, Scene selector and On Air sensor appear automatically; plain topics work with any broker. Bidirectional, retained state, availability last-will.
+- **`POST /api/program`** for automations that would rather use HTTP than MQTT.
+- **On-air pill** in the header on every page.
+
+**Changed:**
+- The automatic camera-failure screen is now a scene (`technical`) instead of a hardcoded image, so it can be restyled in the WebUI. `weather.py`'s generator remains the safety net.
+- While a scene is on air, a camera blip no longer flips the encoder in and out of fallback mode — there is nothing to gain from a reconnect viewers cannot see.
 
 ### v2.11.1 - Overlay layout changes now reach the air
 

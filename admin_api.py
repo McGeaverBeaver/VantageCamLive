@@ -43,6 +43,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 import overlay_layout
+import scenes
 import ingest_probe
 import youtube_api
 import sponsors
@@ -328,6 +329,7 @@ STREAM_PAUSED_FILE = os.path.join(CONFIG_DIR, "stream_paused")
 # MediaMTX mode only: the local encoder that composes the overlays. In that
 # mode youtube_restreamer.pid is just the re-streaming leg, which draws nothing.
 COMPOSITOR_PID_FILE = os.path.join(CONFIG_DIR, "compositor.pid")
+SCENE_LAYER_LIST = os.path.join(CONFIG_DIR, "scene_layer.txt")
 
 
 def get_compositor_pid():
@@ -413,6 +415,125 @@ def set_audio_mode(mode):
 
 
 # ==============================================================================
+#  PROGRAM / PREVIEW BUSES
+# ==============================================================================
+
+_snap_lock = threading.Lock()
+_snap_cache = {"at": 0.0, "path": os.path.join(CONFIG_DIR, "camera_snapshot.jpg")}
+SNAPSHOT_TTL = 10.0
+
+
+def camera_snapshot(force=False):
+    """One JPEG frame straight from the camera, cached briefly.
+
+    The Preview bus needs to show the camera while an away card is on air. A
+    whole second MJPEG pipeline for that would double the preview CPU, so a
+    single-frame grab every few seconds is used instead.
+    """
+    path = _snap_cache["path"]
+    with _snap_lock:
+        fresh = time.monotonic() - _snap_cache["at"] < SNAPSHOT_TTL
+        if not force and fresh and os.path.exists(path):
+            return path
+        if not RTSP_SOURCE:
+            return None
+        tmp = path + ".tmp"
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+               "-rtsp_transport", "tcp", "-timeout", "5000000",
+               "-i", RTSP_SOURCE, "-frames:v", "1", "-q:v", "4", tmp]
+        try:
+            rc = subprocess.run(cmd, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, timeout=15).returncode
+        except (OSError, subprocess.TimeoutExpired):
+            return path if os.path.exists(path) else None
+        if rc == 0 and os.path.exists(tmp):
+            os.replace(tmp, path)
+            _snap_cache["at"] = time.monotonic()
+            return path
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return path if os.path.exists(path) else None
+
+
+def compose_still(bus_target, width=None):
+    """Render what a bus would look like, as JPEG bytes.
+
+    Composited in Pillow from the same overlay PNGs and the same layout the
+    encoder uses, so it is an honest proof of the composition without paying
+    for a second FFmpeg. Returns (bytes, detail) or (None, reason).
+    """
+    from PIL import Image
+    width = width or PREVIEW_WIDTH
+    canvas_w, canvas_h = overlay_layout.CANVAS_W, overlay_layout.CANVAS_H
+    layout = overlay_layout.load()
+
+    if bus_target == "live":
+        snap = camera_snapshot()
+        if not snap:
+            return None, "camera snapshot unavailable"
+        try:
+            with Image.open(snap) as raw:
+                cam = raw.convert("RGB")
+        except (OSError, ValueError):
+            return None, "camera snapshot unreadable"
+        # Match the broadcast's fill/fit behaviour so framing is not a surprise
+        if SCALING_MODE == "fill":
+            scale = max(canvas_w / cam.width, canvas_h / cam.height)
+            cam = cam.resize((max(1, int(cam.width * scale)), max(1, int(cam.height * scale))),
+                             Image.Resampling.BILINEAR)
+            left, top = (cam.width - canvas_w) // 2, (cam.height - canvas_h) // 2
+            base = cam.crop((left, top, left + canvas_w, top + canvas_h)).convert("RGBA")
+        else:
+            scale = min(canvas_w / cam.width, canvas_h / cam.height)
+            cam = cam.resize((max(1, int(cam.width * scale)), max(1, int(cam.height * scale))),
+                             Image.Resampling.BILINEAR)
+            base = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 255))
+            base.paste(cam.convert("RGBA"),
+                       ((canvas_w - cam.width) // 2, (canvas_h - cam.height) // 2))
+    else:
+        card = os.path.join(scenes.SCENES_DIR, f"{bus_target}.png")
+        if not os.path.exists(card):
+            try:
+                scenes.render_to_disk(bus_target)
+            except Exception:
+                return None, f"scene '{bus_target}' could not be rendered"
+        try:
+            with Image.open(card) as raw:
+                base = raw.convert("RGBA").resize((canvas_w, canvas_h))
+        except (OSError, ValueError):
+            return None, "scene card unreadable"
+
+    # Sponsors and weather sit on top in both buses, matching the pipeline
+    for slot, png in (("tl", AD_FINAL_TL), ("tr", AD_FINAL_TR),
+                      ("weather", WEATHER_COMBINED)):
+        if slot == "weather" and not WEATHER_ENABLED:
+            continue
+        box = layout.get(slot) or {}
+        if not box.get("enabled") or not os.path.exists(png):
+            continue
+        try:
+            with Image.open(png) as raw:
+                ov = raw.convert("RGBA")
+        except (OSError, ValueError):
+            continue
+        ratio = min(box["w"] / ov.width, box["h"] / ov.height)
+        if ratio <= 0:
+            continue
+        ov = ov.resize((max(1, int(ov.width * ratio)), max(1, int(ov.height * ratio))),
+                       Image.Resampling.LANCZOS)
+        base.alpha_composite(ov, (box["x"], box["y"]))
+
+    out = base.convert("RGB")
+    out = out.resize((width, max(1, round(width * canvas_h / canvas_w))),
+                     Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    out.save(buf, "JPEG", quality=82, optimize=True)
+    return buf.getvalue(), "ok"
+
+
+# ==============================================================================
 #  PREVIEW PIPELINE
 # ==============================================================================
 
@@ -471,7 +592,13 @@ class PreviewManager:
 
         # Overlay inputs - identical playlists AND identical positions to the
         # broadcast pipeline, so the preview is a faithful proof of what airs.
+        # The scene layer leads, exactly as in start.sh: without it the Program
+        # monitor would keep showing the camera while an away card was on air.
         overlays = []
+        if source != "brb" and os.path.exists(SCENE_LAYER_LIST):
+            overlays.append((SCENE_LAYER_LIST,
+                             f"scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease",
+                             "0:0"))
         for slot, playlist in (("tl", AD_PLAYLIST_TL), ("tr", AD_PLAYLIST_TR),
                                ("weather", WEATHER_LIST)):
             if slot == "weather" and not WEATHER_ENABLED:
@@ -877,6 +1004,7 @@ def build_status():
             "state": watchdog_state,
         },
         "day_night": day_night_info(),
+        "program": program_summary(),
         "preview": {**pstatus, "cpu_percent": cpu.get(pstatus.get("pid"))},
         "system": {
             "load": _loadavg(),
@@ -1009,6 +1137,24 @@ metrics = MetricsHistory()
 _youtube_cache = {"at": 0.0, "data": None}
 _youtube_lock = threading.Lock()
 YOUTUBE_POLL_SECONDS = 30.0
+
+
+def program_summary():
+    """Just the on-air facts, cheap enough for the 3s status poll."""
+    try:
+        st = scenes.state()
+        return {"program": st["program"], "program_name": st["program_name"],
+                "on_air": st["on_air"], "preview": st["preview"],
+                "preview_name": st["preview_name"]}
+    except Exception as e:
+        return {"program": None, "on_air": "unknown", "error": str(e)[:120]}
+
+
+def scene_payload():
+    """Scene library plus bus state, as the WebUI and MQTT bridge both want it."""
+    state = scenes.state()
+    state["backgrounds"] = scenes.list_backgrounds()
+    return {"scenes_state": state}
 
 
 def youtube_broadcast_info(force=False):
@@ -1256,6 +1402,12 @@ class AdminHandler(BaseHTTPRequestHandler):
             self.send_json({"events": events.read(limit)})
         elif path == "/api/youtube/broadcast":
             self.send_json(youtube_broadcast_info(force=True))
+        elif path == "/api/scenes":
+            self.send_json(scene_payload())
+        elif path == "/api/scenes/card":
+            self._serve_scene_card(query)
+        elif path == "/api/program/still":
+            self._serve_bus_still(query)
         elif path == "/api/layout":
             self.send_json({
                 "canvas": {"width": overlay_layout.CANVAS_W, "height": overlay_layout.CANVAS_H},
@@ -1497,6 +1649,20 @@ class AdminHandler(BaseHTTPRequestHandler):
             saved = overlay_layout.save(overlay_layout.defaults())
             preview.stop()
             self.send_json({"ok": True, "message": "layout reset to defaults", "overlays": saved})
+        elif path == "/api/program":
+            self._handle_take()
+        elif path == "/api/program/preview":
+            self._handle_set_preview()
+        elif path == "/api/scenes/save":
+            self._handle_scene_save()
+        elif path == "/api/scenes/delete":
+            self._handle_scene_delete()
+        elif path == "/api/scenes/fallback":
+            self._handle_scene_fallback()
+        elif path == "/api/scenes/away":
+            self._handle_scene_away()
+        elif path == "/api/scenes/background":
+            self._handle_scene_background()
         elif path == "/api/sponsors/schedule":
             self._handle_sponsor_schedule()
         elif path == "/api/ads/upload":
@@ -1591,6 +1757,191 @@ class AdminHandler(BaseHTTPRequestHandler):
 
         self.send_json({"ok": True, "applied": applied, "message": detail,
                         "overlays": saved})
+
+    # ---------------- scenes & the program/preview buses ----------------
+
+    def _serve_scene_card(self, query):
+        """The rendered 2560x1440 card for one scene (UI thumbnails)."""
+        sid = (query.get("id") or [""])[0]
+        if not scenes.ID_RE.match(sid or "") or sid not in scenes.list_scenes():
+            self.send_json({"error": "unknown scene"}, 404)
+            return
+        path = os.path.join(scenes.SCENES_DIR, f"{sid}.png")
+        if not os.path.exists(path):
+            try:
+                scenes.render_to_disk(sid)
+            except Exception:
+                self.send_json({"error": "scene could not be rendered"}, 500)
+                return
+        with open(path, "rb") as f:
+            self.send_bytes(f.read(), "image/png", cache="no-store")
+
+    def _serve_bus_still(self, query):
+        """A composited still of either bus, for the Program/Preview monitors."""
+        bus = (query.get("bus") or ["pvw"])[0]
+        state = scenes.state()
+        target = state["program"] if bus == "pgm" else state["preview"]
+        override = (query.get("target") or [""])[0]
+        if override:
+            if override != "live" and override not in state["scenes"]:
+                self.send_json({"error": "unknown scene"}, 404)
+                return
+            target = override
+        try:
+            data, detail = compose_still(target)
+        except Exception as e:
+            self.send_json({"error": f"compose failed: {e}"}, 500)
+            return
+        if data is None:
+            self.send_json({"error": detail}, 503)
+            return
+        self.send_bytes(data, "image/jpeg", cache="no-store")
+
+    def _handle_take(self):
+        """Take a bus to air. The encoder is NOT restarted - the layer swaps."""
+        body = self._read_body(limit=4096)
+        try:
+            payload = json.loads(body or b"{}")
+        except ValueError:
+            self.send_json({"error": "invalid JSON"}, 400)
+            return
+        # resolve_target understands live/toggle/away/on/off as well as scene
+        # ids, so MQTT, Home Assistant and the WebUI all speak the same words.
+        target = scenes.resolve_target(payload.get("target", ""))
+        ok, msg, state = scenes.set_program(target)
+        if not ok:
+            self.send_json({"error": msg}, 400)
+            return
+        log(f"Program take: {state['program']} ({state['program_name']})")
+        events.record("program", f"On air: {state['program_name']}",
+                      "info" if state["program"] == "live" else "warn")
+        self.send_json({"ok": True, "message": msg, **scene_payload()})
+
+    def _handle_set_preview(self):
+        body = self._read_body(limit=4096)
+        try:
+            payload = json.loads(body or b"{}")
+        except ValueError:
+            self.send_json({"error": "invalid JSON"}, 400)
+            return
+        target = payload.get("target")
+        target = str(target).strip().lower() if target else None
+        ok, msg, _ = scenes.set_preview(target)
+        if not ok:
+            self.send_json({"error": msg}, 400)
+            return
+        self.send_json({"ok": True, "message": msg, **scene_payload()})
+
+    def _handle_scene_save(self):
+        body = self._read_body(limit=65536)
+        try:
+            payload = json.loads(body or b"{}")
+        except ValueError:
+            self.send_json({"error": "invalid JSON"}, 400)
+            return
+        sid = str(payload.get("id", "")).strip().lower()
+        try:
+            saved = scenes.save_scene(sid, payload.get("scene") or payload)
+        except ValueError as e:
+            self.send_json({"error": str(e)}, 400)
+            return
+        except Exception as e:
+            self.send_json({"error": f"could not save scene: {e}"}, 500)
+            return
+        log(f"Scene saved: {sid} ({saved['name']})")
+        self.send_json({"ok": True, "message": f"Saved '{saved['name']}'.",
+                        **scene_payload()})
+
+    def _handle_scene_delete(self):
+        body = self._read_body(limit=4096)
+        try:
+            payload = json.loads(body or b"{}")
+        except ValueError:
+            self.send_json({"error": "invalid JSON"}, 400)
+            return
+        sid = str(payload.get("id", "")).strip().lower()
+        try:
+            scenes.delete_scene(sid)
+        except KeyError:
+            self.send_json({"error": "unknown scene"}, 404)
+            return
+        except ValueError as e:
+            self.send_json({"error": str(e)}, 400)
+            return
+        log(f"Scene deleted: {sid}")
+        self.send_json({"ok": True, "message": "Scene deleted.", **scene_payload()})
+
+    def _handle_scene_fallback(self):
+        body = self._read_body(limit=4096)
+        try:
+            payload = json.loads(body or b"{}")
+        except ValueError:
+            self.send_json({"error": "invalid JSON"}, 400)
+            return
+        try:
+            sid = scenes.set_fallback_scene(str(payload.get("id", "")).strip().lower())
+        except KeyError:
+            self.send_json({"error": "unknown scene"}, 404)
+            return
+        log(f"Automatic fallback scene set to {sid}")
+        self.send_json({"ok": True,
+                        "message": "Automatic camera-failure card updated.",
+                        **scene_payload()})
+
+    def _handle_scene_away(self):
+        body = self._read_body(limit=4096)
+        try:
+            payload = json.loads(body or b"{}")
+        except ValueError:
+            self.send_json({"error": "invalid JSON"}, 400)
+            return
+        try:
+            sid = scenes.set_away_scene(str(payload.get("id", "")).strip().lower())
+        except KeyError:
+            self.send_json({"error": "unknown scene"}, 404)
+            return
+        log(f"Away scene set to {sid}")
+        self.send_json({"ok": True,
+                        "message": "Away card updated - this is what the switch takes to air.",
+                        **scene_payload()})
+
+    def _handle_scene_background(self):
+        ctype = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in ctype:
+            self.send_json({"error": "expected multipart/form-data"}, 400)
+            return
+        body = self._read_body()
+        if body is None:
+            self.send_json({"error": f"upload too large (max {MAX_UPLOAD_BYTES // (1024*1024)}MB)"}, 413)
+            return
+        fields, files = parse_multipart(body, ctype)
+        upload = files.get("file")
+        if not upload:
+            self.send_json({"error": "no file provided"}, 400)
+            return
+        filename, data = upload
+        path = scenes.background_path(filename)
+        if path is None:
+            self.send_json({"error": "invalid filename (png, jpg, jpeg, webp only)"}, 400)
+            return
+        if not data or not validate_image_bytes(data):
+            self.send_json({"error": "file does not look like a valid image"}, 400)
+            return
+        tmp = path + ".uploading"
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+        name = os.path.basename(path)
+        log(f"Scene background uploaded: {name} ({len(data)} bytes)")
+        # Re-render anything already using this background so the change shows
+        for sid, scene in scenes.list_scenes().items():
+            if scene.get("background") == name:
+                try:
+                    scenes.save_scene(sid, scene)
+                except Exception:
+                    pass
+        self.send_json({"ok": True, "message": f"uploaded {name}",
+                        "background": name, **scene_payload()})
 
     def _handle_ad_upload(self):
         ctype = self.headers.get("Content-Type", "")
