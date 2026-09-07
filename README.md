@@ -1,4 +1,4 @@
-# VantageCam Live v2.13.1
+# VantageCam Live v2.13.2
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker Build](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml/badge.svg)](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml)
@@ -407,7 +407,15 @@ The preview source selector matters when a scene is on air:
 |:-------|:------|
 | **Auto (what's on air)** | Mirrors the broadcast, including any away card covering the camera |
 | **Camera only** | The camera itself, ignoring the scene layer &mdash; use this to check the camera *while* an away card is on air |
-| **BRB screen** | The camera-failure card |
+
+*(The old "BRB screen" option is gone. It only ever previewed the fallback card and could not put
+anything on air, which read as a missing feature. Scenes do the job properly: line the
+Technical Difficulties card up on the Preview bus and press TAKE.)*
+
+> **The Preview bus does not open its own camera connection.** The running preview publishes a
+> clean camera frame alongside its composed one, from the same decode. Cameras that cap
+> concurrent RTSP sessions were refusing a third connection (broadcast + preview + snapshot),
+> which showed up as "camera unreachable" on a camera that was streaming perfectly.
 
 > If an away card is on air, the Auto preview shows that card, not the camera. That is correct
 > &mdash; it is what viewers see &mdash; and the preview says so underneath rather than leaving
@@ -723,6 +731,14 @@ When streaming only to YouTube (no local preview), the container uses an optimiz
 ---
 
 ## 📺 Fallback Mode (BRB Screen)
+
+> **If the camera fails, the Technical Difficulties card goes on air by itself.** No action
+> needed and no configuration to enable &mdash; that is the default behaviour whenever the
+> camera is the source. The card is the scene nominated as **"Use for camera failure"** in
+> **Broadcast → Scenes**, so you can restyle it like any other scene. The one deliberate
+> exception: if you have already taken an away card to air by hand, a camera blip does *not*
+> churn the encoder, because viewers are looking at a card either way.
+
 
 When enabled, VantageCam automatically shows a **"We'll Be Right Back"** screen when your camera's RTSP stream becomes unavailable. This keeps your YouTube stream alive instead of going offline.
 
@@ -1275,6 +1291,15 @@ The playlist plays all MP3 files in alphabetical order, then loops back to the b
 ---
 
 ## 📜 Changelog
+
+### v2.13.2 - Preview bus stops competing for the camera
+
+**Fixed:**
+- **"Camera unreachable" on a camera that was streaming fine.** The Preview bus grabbed its own frame over a fresh RTSP session, so with the broadcast encoder and the live preview already connected it was asking for a third. Cameras that cap concurrent sessions refuse that. The preview pipeline now publishes a clean camera frame from the decode it already has, and the Preview bus uses it &mdash; no extra session, no extra decode. The standalone grab remains only for when the preview is stopped.
+- **The Preview bus showed a fixed error string** rather than the real reason, because an `<img>` `onerror` cannot read a JSON body. The reason now travels on the status poll and is displayed verbatim.
+
+**Changed:**
+- **Removed the "BRB screen" preview source.** It previewed the fallback card but could not put it on air, which read as a gap. Scenes cover it properly: select the card on the Preview bus and press TAKE.
 
 ### v2.13.1 - Destination monitor, and two camera-preview fixes
 

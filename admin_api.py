@@ -128,6 +128,10 @@ def _scrub_secrets(line):
 # Preview scratch lives in shared memory so it never wears the config disk
 PREVIEW_DIR = "/dev/shm/vantagecam_preview" if os.path.isdir("/dev/shm") else "/tmp/vantagecam_preview"
 PREVIEW_JPG = os.path.join(PREVIEW_DIR, "preview.jpg")
+# Raw camera frame tapped off the SAME decode as the preview - no overlays, no
+# scene layer. Having the preview publish this means the Preview bus never has
+# to open its own RTSP session (see camera_snapshot).
+PREVIEW_CAM_JPG = os.path.join(PREVIEW_DIR, "preview_camera.jpg")
 
 UI_FILE_CANDIDATES = [
     "/admin_ui.html",
@@ -419,6 +423,9 @@ def set_audio_mode(mode):
 #  PROGRAM / PREVIEW BUSES
 # ==============================================================================
 
+# How stale the preview's camera tap may be before we stop trusting it
+PREVIEW_TAP_MAX_AGE = 20.0
+
 _snap_lock = threading.Lock()
 _snap_cache = {"at": 0.0, "failed_at": 0.0, "error": "",
                "path": os.path.join(CONFIG_DIR, "camera_snapshot.jpg")}
@@ -444,6 +451,16 @@ def camera_snapshot(force=False):
     path = _snap_cache["path"]
     with _snap_lock:
         now = time.monotonic()
+        # The running preview already has the camera decoded and publishes a raw
+        # frame. Use it: opening a second (or third, alongside the broadcast)
+        # RTSP session is what makes cameras with a session cap refuse, and it
+        # is wasted work even on cameras that allow it.
+        try:
+            if os.path.getmtime(PREVIEW_CAM_JPG) > time.time() - PREVIEW_TAP_MAX_AGE:
+                _snap_cache["error"] = ""
+                return PREVIEW_CAM_JPG
+        except OSError:
+            pass
         fresh = now - _snap_cache["at"] < SNAPSHOT_TTL
         if not force and fresh and os.path.exists(path):
             return path
@@ -661,6 +678,13 @@ class PreviewManager:
         chain = base
         last = "base"
         idx = 1
+        # Split the decoded camera before any overlay so we can publish a clean
+        # camera frame alongside the composed preview. One decode, two JPEGs.
+        tap_camera = source != "brb"
+        if tap_camera:
+            chain += (f";[base]split=2[bmain][bsnap]"
+                      f";[bsnap]scale={PREVIEW_WIDTH}:-2[camout]")
+            last = "bmain"
         for playlist, scale_cmd, coords in overlays:
             cmd += ["-f", "concat", "-safe", "0", "-stream_loop", "-1", "-i", playlist]
             chain += (f";[{idx}:v]{scale_cmd},format=rgba[ovr{idx}]"
@@ -677,6 +701,17 @@ class PreviewManager:
             "-f", "image2", "-update", "1", "-atomic_writing", "1",
             PREVIEW_JPG,
         ]
+        if tap_camera:
+            # Second output: the clean camera frame. Slower than the preview on
+            # purpose - the Preview bus only needs a still every few seconds, and
+            # this costs one small JPEG encode rather than another RTSP session.
+            cmd += [
+                "-map", "[camout]", "-an",
+                "-r", "1",
+                "-q:v", "5",
+                "-f", "image2", "-update", "1", "-atomic_writing", "1",
+                PREVIEW_CAM_JPG,
+            ]
         return cmd
 
     # ---- lifecycle -----------------------------------------------------------
@@ -1041,6 +1076,10 @@ def build_status():
         "camera": {
             "rtsp_configured": bool(RTSP_SOURCE),
             "rtsp_status": rtsp_probe.check(),
+            # An <img> onerror cannot read a JSON body, so the Preview bus's
+            # real failure reason has to travel on the status poll instead.
+            "snapshot_error": _snap_cache.get("error", ""),
+            "snapshot_from_preview": os.path.exists(PREVIEW_CAM_JPG),
         },
         "audio": {
             "mode": audio_mode,

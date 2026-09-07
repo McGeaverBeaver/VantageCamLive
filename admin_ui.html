@@ -389,7 +389,6 @@
           <select id="previewSource" title="Preview source">
             <option value="auto">Auto (what's on air)</option>
             <option value="camera">Camera only</option>
-            <option value="brb">BRB screen</option>
           </select>
           <button id="btnPreviewStart" class="primary">&#9654; Start</button>
           <button id="btnPreviewStop" disabled>&#9632; Stop</button>
@@ -1519,8 +1518,11 @@ function renderBuses() {
        "/api/program/still?bus=pvw&t=" + Date.now(),
        sceneState.preview === "live" ? "Camera, composited with the current overlays."
                                      : "Away card, composited with the current overlays.",
-       sceneState.preview === "live" ? "Camera unreachable - no snapshot to preview."
-                                     : "That scene card could not be rendered.");
+       sceneState.preview === "live"
+         ? ((statusData && statusData.camera && statusData.camera.snapshot_error)
+              ? "Camera frame unavailable: " + statusData.camera.snapshot_error
+              : "No camera frame yet - start the preview on the Dashboard and it will appear here.")
+         : "That scene card could not be rendered.");
   const btn = $("btnTake");
   btn.classList.toggle("to-live", sceneState.preview === "live");
   btn.innerHTML = "&#9654; TAKE " + esc(sceneLabel(sceneState.preview)).toUpperCase();
