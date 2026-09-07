@@ -642,6 +642,17 @@ fi
 if [ ! -f "/config/audio_mode" ]; then echo "muted" > "/config/audio_mode"; fi
 if [ "$WATCHDOG_ENABLED" = "true" ] && [ -n "$YOUTUBE_KEY" ]; then log "--- Starting Self-Healing Watchdog ---"; python3 /watchdog.py & fi
 
+# --- Scene scheduler: takes cards to air at clock times or sunrise/sunset.
+# Always supervised, but it does nothing at all until the operator enables it in
+# the WebUI, so this costs one idle 30s loop on a default install.
+(
+    while true; do
+        python3 /scene_schedule.py daemon 2>&1 | while IFS= read -r _l; do log "$_l"; done
+        log "[Schedule] scheduler exited - restarting in 15s"
+        sleep 15
+    done
+) &
+
 # --- MQTT bridge (optional): Home Assistant / Node-RED control of the program bus
 # Supervised: the bridge must never be able to take the stream down, and a
 # broker that disappears must not leave the switch dead forever.

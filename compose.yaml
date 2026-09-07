@@ -85,6 +85,11 @@ services:
       # Default: 900 (15 Minutes)
       - ALERTS_UPDATE_INTERVAL=900
 
+      # --- SCENE SCHEDULING (optional) ---
+      # Configured in Admin WebUI -> Broadcast -> Schedule, not here: rules are
+      # stored in /config/scene_schedule.json. Off by default. Lets a scene go
+      # on air at a clock time or at real sunrise/sunset for WEATHER_LAT/LON.
+
       # --- MQTT / HOME ASSISTANT (optional) ---
       # Set MQTT_HOST to enable the bridge. Home Assistant then discovers an
       # "Away" switch, a "Scene" selector and an "On Air" sensor by itself.

@@ -1,4 +1,4 @@
-# VantageCam Live v2.12.0
+# VantageCam Live v2.13.0
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker Build](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml/badge.svg)](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml)
@@ -20,7 +20,7 @@ Transform a standard security camera feed into a professional broadcast without 
 ## 📋 Table of Contents
 
 - [Key Features](#-key-features)
-- [What's New in v2.12.0](#-whats-new-in-v2120)
+- [What's New in v2.13.0](#-whats-new-in-v2130)
 - [Admin WebUI & Stream Preview](#-admin-webui--stream-preview)
 - [Stream Won't Start?](#-stream-wont-start)
 - [Getting Started](#-getting-started)
@@ -61,6 +61,7 @@ Transform a standard security camera feed into a professional broadcast without 
 - **Simulcast** — Push the same encode to Facebook/Twitch/anything RTMP alongside YouTube
 
 ### Broadcast Suite *(v2.12+)*
+- **Optional scheduling** — go away at sunset, come back at sunrise, without touching anything
 - **Program / Preview monitors** — see what is on air and what a take would put there
 - **Away scenes** — a library of editable cards, switched on demand, not just on failure
 - **Seamless switching** — the encoder never restarts, so YouTube never sees a disconnect
@@ -81,6 +82,43 @@ Transform a standard security camera feed into a professional broadcast without 
 - **Exponential Backoff** — Smart retry delays prevent hammering YouTube
 - **Auto-PUBLIC** — Restores stream visibility after recovery via YouTube API
 - **Discord Alerts** — Instant notifications for offline/recovery/errors
+
+---
+
+## 🚀 What's New in v2.13.0
+
+### 🕐 Optional Scene Scheduling
+
+Scenes can now go on air by themselves — at a clock time, or at **real sunrise and sunset**
+for your coordinates. The classic use is a camera that has nothing to show after dark:
+
+> at **sunset**, show **Closed For The Evening** · at **sunrise −15 min**, show **Camera**
+
+**It is off by default and does nothing until you switch it on.** The rule list stays greyed
+out until the master toggle is on, and the panel tells you plainly what will happen next
+(*"Next: Away at Mon 7:52 PM"*) or that nothing will (*"Nothing runs automatically. Your
+manual takes are the only thing on air."*).
+
+Each rule has a time (sunrise/sunset with an optional ± offset in minutes, or a fixed clock
+time), the scene to show — **Camera** counts as a scene, so coming back is just another rule
+— and which days of the week it applies to.
+
+**Two design choices worth knowing about:**
+
+- **Rules fire once, at their moment.** If a sunset rule puts your away card up and you take
+  the camera back by hand ten minutes later, the scheduler leaves you alone until its next
+  scheduled moment. A scheduler that continuously enforced state would make manual control
+  useless.
+- **A failed sunrise lookup does not silently skip the rule.** Sunrise moves by about four
+  minutes a day, so the last known times are used with a warning rather than leaving your
+  camera up all night because an API call timed out.
+
+**"Restore state after a restart"** (on by default, and only relevant when the schedule is
+enabled) puts the air back where the schedule says it belongs after a container restart —
+otherwise a reboot at 2am comes back on camera even though the 11pm rule already fired.
+
+Scheduling needs no environment variables; it is configured entirely in
+**Admin WebUI → Broadcast → Schedule** and stored in `/config/scene_schedule.json`.
 
 ---
 
@@ -414,6 +452,8 @@ bottom-right, identical scaling) and serves it as MJPEG to your browser.
 | `/api/program` | POST | Take to air: `live`, `away`, `toggle`, or a scene id |
 | `/api/program/preview` | POST | Line a source up on the Preview bus |
 | `/api/program/still?bus=pgm\|pvw` | GET | Composited still of either bus |
+| `/api/schedule` | GET | Schedule rules plus computed next-fire times |
+| `/api/schedule` | POST | Save the schedule (`{enabled, apply_on_start, rules}`) |
 
 ---
 
@@ -1213,6 +1253,15 @@ The playlist plays all MP3 files in alphabetical order, then loops back to the b
 ---
 
 ## 📜 Changelog
+
+### v2.13.0 - Optional scene scheduling
+
+**New Features:**
+- **Scene scheduler** — take a scene (or the camera) to air at a fixed clock time or at real sunrise/sunset with an optional ± offset, filtered by day of week. Configured entirely in the WebUI; no environment variables.
+- **Off by default**, with the rule list disabled until the master toggle is on and a plain-language statement of what fires next.
+- **Edge-triggered** — a rule fires once at its moment, so a manual take afterwards is never overridden.
+- **Restart reconciliation** (optional, on by default) restores the scheduled state after a container restart, so a reboot in the middle of the night does not come back on camera.
+- **Stale sun times are used rather than skipping a rule** when the Open-Meteo lookup fails; sunrise moves ~4 minutes a day, so a cached value beats not firing.
 
 ### v2.12.0 - Broadcast Suite: scenes, Program/Preview, MQTT
 

@@ -4,7 +4,7 @@ FROM alpine:3.19
 ARG INCLUDE_INTEL=true
 ARG ARCH=amd64
 ARG MTX_VERSION=v1.15.0
-ARG VERSION=2.12.0
+ARG VERSION=2.13.0
 
 # Image metadata
 LABEL maintainer="McGeaverBeaver"
@@ -74,8 +74,9 @@ COPY sponsors.py /sponsors.py
 COPY sun_times.py /sun_times.py
 COPY scenes.py /scenes.py
 COPY mqtt_bridge.py /mqtt_bridge.py
-RUN sed -i 's/\r$//' /start.sh /weather.py /audio_api.py /watchdog.py /admin_api.py /overlay_layout.py /ingest_probe.py /youtube_api.py /events.py /sponsors.py /sun_times.py /scenes.py /mqtt_bridge.py \
-    && chmod +x /start.sh /watchdog.py /admin_api.py /ingest_probe.py /scenes.py /mqtt_bridge.py
+COPY scene_schedule.py /scene_schedule.py
+RUN sed -i 's/\r$//' /start.sh /weather.py /audio_api.py /watchdog.py /admin_api.py /overlay_layout.py /ingest_probe.py /youtube_api.py /events.py /sponsors.py /sun_times.py /scenes.py /mqtt_bridge.py /scene_schedule.py \
+    && chmod +x /start.sh /watchdog.py /admin_api.py /ingest_probe.py /scenes.py /mqtt_bridge.py /scene_schedule.py
 
 # 6. Create config directory and health check script
 RUN mkdir -p /config /health

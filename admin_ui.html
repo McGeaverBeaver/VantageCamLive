@@ -166,6 +166,33 @@
   .sc-badge.air { background: rgba(248,81,73,.15); border-color: var(--red); color: var(--red); }
   .sc-badge.away { background: rgba(88,166,255,.15); border-color: var(--accent); color: var(--accent); }
   .sc-badge.fault { background: rgba(210,153,34,.15); border-color: var(--orange); color: var(--orange); }
+  .sched-master { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+                  padding: 12px 14px; border-radius: var(--radius);
+                  background: var(--panel2); border: 1px solid var(--border); }
+  .sched-master.on { border-color: var(--green); background: rgba(63,185,80,.08); }
+  .sched-body.off { opacity: .45; pointer-events: none; }
+  .sw { position: relative; width: 46px; height: 26px; flex: none; }
+  .sw input { opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .sw i { position: absolute; inset: 0; border-radius: 13px; background: var(--border);
+          transition: background .15s; pointer-events: none; }
+  .sw i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+                 border-radius: 50%; background: #fff; transition: transform .15s; }
+  .sw input:checked + i { background: var(--green); }
+  .sw input:checked + i::after { transform: translateX(20px); }
+  .rule { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+          padding: 10px 12px; background: var(--panel2); border: 1px solid var(--border);
+          border-radius: 8px; margin-bottom: 8px; }
+  .rule.bad { border-color: var(--red); }
+  .rule-when { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .rule-when select, .rule-when input { min-width: 0; }
+  .rule-when input[type=time] { width: 110px; }
+  .rule-when input[type=number] { width: 78px; }
+  .rule-days { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 6px; }
+  .rule-days label { font-size: 11px; padding: 2px 7px; border: 1px solid var(--border);
+                     border-radius: 4px; cursor: pointer; color: var(--muted); }
+  .rule-days input { display: none; }
+  .rule-days input:checked + span { color: var(--accent); font-weight: 700; }
+  .rule-next { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
   .scene-form { display: grid; grid-template-columns: 150px 1fr; gap: 10px 12px; align-items: center; }
   .scene-form .full { grid-column: 1 / -1; }
   .scene-form input[type=color] { width: 54px; height: 32px; padding: 2px; }
@@ -464,6 +491,36 @@
         <button id="btnSceneNew" class="primary">+ New scene</button>
       </div>
       <div class="panel-body"><div class="scene-grid" id="sceneGrid"></div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>&#128340; Schedule</h2>
+        <span class="muted">optional &mdash; switch a scene on air at a time or at sunrise/sunset</span>
+        <span class="spacer"></span>
+        <button id="btnRuleAdd">+ Add rule</button>
+        <button id="btnSchedSave" class="primary">&#128190; Save</button>
+      </div>
+      <div class="panel-body">
+        <div class="sched-master" id="schedMaster">
+          <label class="sw"><input type="checkbox" id="schedEnabled"><i></i></label>
+          <div>
+            <div style="font-weight:700" id="schedStateLabel">Schedule is off</div>
+            <div class="muted" id="schedNext">Nothing runs automatically. Your manual takes are the only thing on air.</div>
+          </div>
+          <span class="spacer"></span>
+          <label class="muted" title="After a container restart, put the air back where the schedule says it should be">
+            <input type="checkbox" id="schedApplyOnStart"> restore state after a restart</label>
+        </div>
+        <div class="sched-body off" id="schedBody" style="margin-top:14px">
+          <div id="ruleList"></div>
+          <p class="muted" style="margin:10px 0 0">
+            Rules fire once, at their moment. Taking something to air by hand afterwards is never
+            overridden &mdash; the schedule waits for its next moment. Sunrise and sunset come from
+            your <code>WEATHER_LAT</code>/<code>WEATHER_LON</code>; if the lookup fails the last
+            known times are used rather than skipping the rule.
+          </p>
+        </div>
+      </div>
     </div>
 
     <div class="panel" id="sceneEditorPanel" style="display:none">
@@ -1333,6 +1390,7 @@ async function loadScenes() {
     renderBuses();
     renderSceneGrid();
     renderPvwPicker();
+    loadSchedule2();
     if (editingScene && !sceneState.scenes[editingScene]) closeSceneEditor();
   } catch (e) { toast("Scenes unavailable: " + e.message, true); }
 }
@@ -1441,6 +1499,112 @@ $("btnTakeLive").addEventListener("click", () => take("live"));
 $("btnTakeAway").addEventListener("click", () => take("away"));
 $("btnBusRefresh").addEventListener("click", () => { loadScenes(); });
 $("pvwPick").addEventListener("change", e => setPreviewBus(e.target.value));
+
+// ---------- schedule (optional; off by default) ----------
+let schedule = null;
+const DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+async function loadSchedule2() {
+  try { schedule = await api("/api/schedule"); renderSchedule2(); }
+  catch (e) { $("ruleList").innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+}
+
+function renderSchedule2() {
+  if (!schedule) return;
+  $("schedEnabled").checked = !!schedule.enabled;
+  $("schedApplyOnStart").checked = !!schedule.apply_on_start;
+  $("schedMaster").classList.toggle("on", !!schedule.enabled);
+  $("schedBody").classList.toggle("off", !schedule.enabled);
+  $("schedStateLabel").textContent = schedule.enabled ? "Schedule is on" : "Schedule is off";
+  if (!schedule.enabled) {
+    $("schedNext").textContent =
+      "Nothing runs automatically. Your manual takes are the only thing on air.";
+  } else if (schedule.next) {
+    const t = new Date(schedule.next.next_fire);
+    $("schedNext").textContent = "Next: " + schedule.next.action_name + " at " +
+      t.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  } else {
+    $("schedNext").textContent = "On, but no rule will fire - add one below.";
+  }
+  const opts = '<option value="live">Camera</option>' +
+    Object.keys(sceneState ? sceneState.scenes : {}).sort().map(id =>
+      `<option value="${esc(id)}">${esc(sceneState.scenes[id].name)}</option>`).join("");
+  $("ruleList").innerHTML = schedule.rules.length ? schedule.rules.map((r, i) => `
+    <div class="rule ${r.action_valid ? "" : "bad"}" data-i="${i}">
+      <label class="sw"><input type="checkbox" data-f="enabled" ${r.enabled ? "checked" : ""}><i></i></label>
+      <div>
+        <div class="rule-when">
+          <select data-f="type">
+            <option value="sun" ${r.type === "sun" ? "selected" : ""}>At sunrise/sunset</option>
+            <option value="clock" ${r.type === "clock" ? "selected" : ""}>At a clock time</option>
+          </select>
+          ${r.type === "sun" ? `
+            <select data-f="event">
+              <option value="sunrise" ${r.event === "sunrise" ? "selected" : ""}>sunrise</option>
+              <option value="sunset" ${r.event === "sunset" ? "selected" : ""}>sunset</option>
+            </select>
+            <input type="number" data-f="offset_minutes" value="${r.offset_minutes}" step="5"
+                   min="-720" max="720" title="minutes before (-) or after (+)">
+            <span class="muted">min</span>`
+          : `<input type="time" data-f="time" value="${esc(r.time)}">`}
+          <span class="muted">&rarr; show</span>
+          <select data-f="action">${opts}</select>
+        </div>
+        <div class="rule-days">${DAY_LABELS.map((d, di) =>
+          `<label><input type="checkbox" data-day="${di}" ${r.days.includes(di) ? "checked" : ""}>
+             <span>${d}</span></label>`).join("")}</div>
+        <div class="rule-next">${r.action_valid
+          ? (r.next_fire ? "next: " + esc(new Date(r.next_fire).toLocaleString([],
+              { weekday: "short", hour: "numeric", minute: "2-digit" }))
+            : (r.enabled ? "cannot be scheduled - is the sunrise/sunset lookup working?" : "disabled"))
+          : "this rule points at a scene that no longer exists"}</div>
+      </div>
+      <button data-del="${i}" class="danger" title="Delete this rule">&#10005;</button>
+    </div>`).join("")
+    : '<span class="muted">No rules yet. Add one to have a scene go on air by itself.</span>';
+
+  $("ruleList").querySelectorAll("select[data-f=action]").forEach((sel, i) => {
+    sel.value = schedule.rules[i].action;
+  });
+  $("ruleList").querySelectorAll(".rule").forEach(row => {
+    const i = +row.dataset.i;
+    row.querySelectorAll("[data-f]").forEach(inp => inp.addEventListener("change", () => {
+      const f = inp.dataset.f;
+      schedule.rules[i][f] = inp.type === "checkbox" ? inp.checked
+        : (inp.type === "number" ? parseInt(inp.value || "0", 10) : inp.value);
+      if (f === "type") renderSchedule2();       // the row's controls change shape
+    }));
+    row.querySelectorAll("[data-day]").forEach(cb => cb.addEventListener("change", () => {
+      const d = +cb.dataset.day, days = schedule.rules[i].days;
+      if (cb.checked) { if (!days.includes(d)) days.push(d); }
+      else schedule.rules[i].days = days.filter(x => x !== d);
+    }));
+    row.querySelector("[data-del]").addEventListener("click", () => {
+      schedule.rules.splice(i, 1); renderSchedule2();
+    });
+  });
+}
+
+$("schedEnabled").addEventListener("change", e => {
+  schedule.enabled = e.target.checked; renderSchedule2();
+});
+$("schedApplyOnStart").addEventListener("change", e => { schedule.apply_on_start = e.target.checked; });
+$("btnRuleAdd").addEventListener("click", () => {
+  if (!schedule) return;
+  schedule.rules.push({ id: "r" + Date.now(), enabled: true, type: "sun", event: "sunset",
+    offset_minutes: 0, time: "", action: sceneState ? sceneState.away_scene : "live",
+    days: [0,1,2,3,4,5,6], action_valid: true, next_fire: null });
+  renderSchedule2();
+});
+$("btnSchedSave").addEventListener("click", async () => {
+  try {
+    const r = await api("/api/schedule", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: schedule.enabled, apply_on_start: schedule.apply_on_start,
+                             rules: schedule.rules }) });
+    schedule = r; toast(r.message); renderSchedule2();
+  } catch (e) { toast(e.message, true); }
+});
 
 // ---------- scene editor ----------
 function openSceneEditor(id) {

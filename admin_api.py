@@ -44,6 +44,7 @@ from urllib.parse import urlparse, parse_qs
 
 import overlay_layout
 import scenes
+import scene_schedule
 import ingest_probe
 import youtube_api
 import sponsors
@@ -1404,6 +1405,8 @@ class AdminHandler(BaseHTTPRequestHandler):
             self.send_json(youtube_broadcast_info(force=True))
         elif path == "/api/scenes":
             self.send_json(scene_payload())
+        elif path == "/api/schedule":
+            self.send_json(scene_schedule.status())
         elif path == "/api/scenes/card":
             self._serve_scene_card(query)
         elif path == "/api/program/still":
@@ -1653,6 +1656,8 @@ class AdminHandler(BaseHTTPRequestHandler):
             self._handle_take()
         elif path == "/api/program/preview":
             self._handle_set_preview()
+        elif path == "/api/schedule":
+            self._handle_schedule_save()
         elif path == "/api/scenes/save":
             self._handle_scene_save()
         elif path == "/api/scenes/delete":
@@ -1887,6 +1892,37 @@ class AdminHandler(BaseHTTPRequestHandler):
         self.send_json({"ok": True,
                         "message": "Automatic camera-failure card updated.",
                         **scene_payload()})
+
+    def _handle_schedule_save(self):
+        """Whole-schedule save: the UI edits it as one document."""
+        body = self._read_body(limit=65536)
+        try:
+            payload = json.loads(body or b"{}")
+        except ValueError:
+            self.send_json({"error": "invalid JSON"}, 400)
+            return
+        if not isinstance(payload.get("rules", []), list):
+            self.send_json({"error": "'rules' must be a list"}, 400)
+            return
+        try:
+            saved = scene_schedule.save({
+                "enabled": payload.get("enabled", False),
+                "apply_on_start": payload.get("apply_on_start", True),
+                "rules": payload.get("rules") or [],
+                # Enabling the schedule must not instantly fire every rule that
+                # happens to have passed today, so the tick clock starts now.
+                "last_tick": time.time(),
+            })
+        except Exception as e:
+            self.send_json({"error": f"could not save schedule: {e}"}, 500)
+            return
+        log(f"Schedule saved: {'enabled' if saved['enabled'] else 'disabled'}, "
+            f"{len(saved['rules'])} rule(s)")
+        self.send_json({"ok": True,
+                        "message": ("Schedule saved and running." if saved["enabled"]
+                                    else "Schedule saved. It is switched off, so nothing "
+                                         "will change on its own."),
+                        **scene_schedule.status()})
 
     def _handle_scene_away(self):
         body = self._read_body(limit=4096)
