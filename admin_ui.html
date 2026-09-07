@@ -197,6 +197,16 @@
   .scene-form .full { grid-column: 1 / -1; }
   .scene-form input[type=color] { width: 54px; height: 32px; padding: 2px; }
   .scene-form label { color: var(--muted); font-size: 12.5px; }
+  /* destination monitor */
+  .warn-inline { color: var(--orange); }
+  .preview-stats a { color: var(--accent); }
+  .yt-frame { position: relative; width: 100%; aspect-ratio: 16/9; background: #000;
+              border-radius: 8px; overflow: hidden; }
+  .yt-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .yt-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column;
+                    align-items: center; justify-content: center; gap: 10px; text-align: center;
+                    padding: 18px; color: var(--muted); font-size: 13px;
+                    background: repeating-linear-gradient(45deg, #0a0a0a, #0a0a0a 12px, #111 12px, #111 24px); }
   .daynight { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
               padding: 10px 12px; background: var(--panel2); border: 1px solid var(--border);
               border-radius: 8px; font-size: 12.5px; }
@@ -219,7 +229,7 @@
   .badge.off { background: rgba(139,148,158,.16); color: var(--muted); }
 
   /* dashboard top row: preview beside broadcast control */
-  .dash-top { display: grid; gap: 16px; grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr);
+  .dash-top { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
               align-items: start; margin-bottom: 16px; }
   @media (max-width: 1100px) { .dash-top { grid-template-columns: 1fr; } }
   .bcast-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -377,8 +387,8 @@
           <h2>&#127916; Live Preview</h2>
           <span class="spacer"></span>
           <select id="previewSource" title="Preview source">
-            <option value="auto">Auto</option>
-            <option value="camera">Camera</option>
+            <option value="auto">Auto (what's on air)</option>
+            <option value="camera">Camera only</option>
             <option value="brb">BRB screen</option>
           </select>
           <button id="btnPreviewStart" class="primary">&#9654; Start</button>
@@ -398,8 +408,25 @@
         </div>
       </div>
 
-      <!-- BROADCAST CONTROL -->
+      <!-- DESTINATION MONITOR -->
       <div class="panel" style="margin-bottom:0">
+        <div class="panel-head">
+          <h2>&#128250; On YouTube</h2>
+          <span class="muted">what viewers actually receive</span>
+          <span class="spacer"></span>
+          <button id="btnYtLoad">&#9654; Load player</button>
+        </div>
+        <div class="panel-body">
+          <div class="yt-frame" id="ytFrame">
+            <div class="yt-placeholder" id="ytPlaceholder">Checking the destination&hellip;</div>
+          </div>
+          <div class="preview-stats" id="ytStats"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BROADCAST CONTROL -->
+    <div class="panel">
         <div class="panel-head"><h2>&#128225; Broadcast Control</h2><span class="spacer"></span>
           <span class="pill" id="pillBroadcast">…</span></div>
         <div class="panel-body">
@@ -419,7 +446,6 @@
           </div>
           <table class="kv" id="tblStream" style="margin-top:14px"></table>
         </div>
-      </div>
     </div>
 
     <div class="tiles" id="statTiles"></div>
@@ -791,6 +817,7 @@ function renderStatus(s) {
   const st = s.stream, cam = s.camera, aud = s.audio, wd = s.watchdog, sys = s.system, pv = s.preview;
   renderDayNight(s.day_night);
   renderOnAirPill(s.program);
+  renderYouTubeOutput(s.youtube);
 
   const pillStream = $("pillStream");
   if (st.paused) {
@@ -914,6 +941,13 @@ function renderPreview(pv) {
     stats.push(`viewers: <b>${pv.viewers}</b>`);
     if (pv.low_cpu_mode) stats.push(`<span class="mid">low-CPU mode</span>`);
     if (!pv.has_frame) stats.push(`<span class="mid">waiting for first frame…</span>`);
+    // A scene covering the camera looks identical to a dead camera. Say so here,
+    // or the operator reasonably concludes the camera has failed.
+    const prog = statusData && statusData.program;
+    if (prog && prog.program && prog.program !== "live" && $("previewSource").value === "auto") {
+      stats.push(`<span class="warn-inline">showing the <b>${esc(prog.program_name)}</b> card, ` +
+                 `not the camera &mdash; choose <b>Camera only</b> to check the camera</span>`);
+    }
   } else if (pv.last_error) stats.push(`<span class="bad">last error: ${esc(pv.last_error)}</span>`);
   $("previewStats").innerHTML = stats.join(" &middot; ");
 }
@@ -962,6 +996,58 @@ document.querySelectorAll("#privacySeg button").forEach(b => b.addEventListener(
   document.querySelectorAll("#privacySeg button").forEach(x => x.disabled = false);
   setTimeout(refreshStatus, 400);
 }));
+
+// ---------- destination monitor: the real YouTube output ----------
+let ytLoadedId = null;      // which video the iframe currently holds
+
+function renderYouTubeOutput(yt) {
+  const frame = $("ytFrame"), stats = $("ytStats"), btn = $("btnYtLoad");
+  const ph = () => {
+    if (ytLoadedId) { frame.innerHTML = '<div class="yt-placeholder" id="ytPlaceholder"></div>'; ytLoadedId = null; }
+    return $("ytPlaceholder") || frame.querySelector(".yt-placeholder");
+  };
+  if (!yt || !yt.configured) {
+    ph().innerHTML = "Set the YouTube API credentials to monitor the destination here.<br>" +
+      '<span class="muted">Without them the encoder still publishes - this panel just cannot find the video.</span>';
+    btn.disabled = true; stats.textContent = ""; return;
+  }
+  if (!yt.available) {
+    ph().innerHTML = '<span class="bad">YouTube API unavailable</span><br>' + esc(yt.note || "");
+    btn.disabled = true; stats.textContent = ""; return;
+  }
+  const b = yt.broadcast;
+  if (!b) {
+    ph().textContent = yt.note || "No active or upcoming broadcast on this channel.";
+    btn.disabled = true; stats.textContent = ""; return;
+  }
+  btn.disabled = false;
+  const live = b.state === "active";
+  stats.innerHTML =
+    `<span class="pill ${live ? "live" : "warn"}">${live ? "LIVE" : "UPCOMING"}</span> ` +
+    `<b>${esc(b.title || "(untitled)")}</b>` +
+    (b.viewers != null ? ` &middot; <b>${b.viewers}</b> watching` : "") +
+    ` &middot; <a href="${esc(b.watch_url)}" target="_blank" rel="noopener">open on YouTube &#8599;</a>`;
+  if (ytLoadedId === b.id) return;              // already playing this video
+  if (ytLoadedId && ytLoadedId !== b.id) ytLoadedId = null;   // broadcast changed
+  const el = ph();
+  el.innerHTML = (live
+      ? "The broadcast is live on YouTube."
+      : "The broadcast is scheduled but not live yet.") +
+    '<br><span class="muted">Press <b>Load player</b> to watch the real output here. ' +
+    "It is not loaded automatically because it pulls the full stream over your connection.</span>";
+}
+
+$("btnYtLoad").addEventListener("click", () => {
+  const b = statusData && statusData.youtube && statusData.youtube.broadcast;
+  if (!b || !b.id) { toast("No broadcast to load.", true); return; }
+  // youtube-nocookie + muted: browsers only autoplay muted, and this is a
+  // confidence monitor - the operator does not want the audio doubled.
+  $("ytFrame").innerHTML =
+    `<iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(b.id)}?autoplay=1&mute=1&rel=0"
+       allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen
+       title="YouTube output"></iframe>`;
+  ytLoadedId = b.id;
+});
 
 function renderYouTube(yt, st) {
   const box = $("youtubeBox"), row = $("privacyRow");

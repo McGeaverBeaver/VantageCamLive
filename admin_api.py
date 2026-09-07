@@ -420,8 +420,18 @@ def set_audio_mode(mode):
 # ==============================================================================
 
 _snap_lock = threading.Lock()
-_snap_cache = {"at": 0.0, "path": os.path.join(CONFIG_DIR, "camera_snapshot.jpg")}
+_snap_cache = {"at": 0.0, "failed_at": 0.0, "error": "",
+               "path": os.path.join(CONFIG_DIR, "camera_snapshot.jpg")}
+
+
+def mask_rtsp(text):
+    """Never echo camera credentials into the UI or the log."""
+    return re.sub(r"//[^/@\s]*:[^/@\s]*@", "//***:***@", text or "")
 SNAPSHOT_TTL = 10.0
+# A failing grab can take ~10s to give up. Without a cooldown the Broadcast
+# page's 5s refresh would pile up an FFmpeg process per poll against a camera
+# that is already struggling.
+SNAPSHOT_FAIL_COOLDOWN = 30.0
 
 
 def camera_snapshot(force=False):
@@ -433,24 +443,58 @@ def camera_snapshot(force=False):
     """
     path = _snap_cache["path"]
     with _snap_lock:
-        fresh = time.monotonic() - _snap_cache["at"] < SNAPSHOT_TTL
+        now = time.monotonic()
+        fresh = now - _snap_cache["at"] < SNAPSHOT_TTL
         if not force and fresh and os.path.exists(path):
             return path
         if not RTSP_SOURCE:
+            _snap_cache["error"] = "RTSP_SOURCE is not set"
             return None
+        if not force and now - _snap_cache["failed_at"] < SNAPSHOT_FAIL_COOLDOWN:
+            # Still in the cooldown after a failure: serve the last good frame
+            # if there is one, and keep reporting why rather than hammering.
+            return path if os.path.exists(path) else None
         tmp = path + ".tmp"
+        # Mirror start.sh's RTSP_INPUT_OPTS. Without discardcorrupt/ignore_err a
+        # single lost reference frame aborts the grab, which is exactly what
+        # happens on an HEVC camera with any packet loss ("Could not find ref
+        # with POC n"). The generous timeout covers waiting for a keyframe on a
+        # long-GOP stream.
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-               "-rtsp_transport", "tcp", "-timeout", "5000000",
-               "-i", RTSP_SOURCE, "-frames:v", "1", "-q:v", "4", tmp]
+               "-thread_queue_size", "512",
+               "-rtsp_transport", "tcp",
+               "-buffer_size", "4194304",
+               "-max_delay", "500000",
+               "-fflags", "+genpts+discardcorrupt",
+               "-err_detect", "ignore_err",
+               "-timeout", "8000000",
+               "-i", RTSP_SOURCE,
+               "-frames:v", "1", "-q:v", "4", "-an", tmp]
         try:
-            rc = subprocess.run(cmd, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, timeout=15).returncode
-        except (OSError, subprocess.TimeoutExpired):
+            proc = subprocess.run(cmd, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.PIPE, timeout=25)
+            rc = proc.returncode
+            err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+        except subprocess.TimeoutExpired:
+            _snap_cache["failed_at"] = time.monotonic()
+            _snap_cache["error"] = "the camera did not deliver a frame within 25s"
+            return path if os.path.exists(path) else None
+        except OSError as e:
+            _snap_cache["failed_at"] = time.monotonic()
+            _snap_cache["error"] = f"could not run ffmpeg: {e}"
             return path if os.path.exists(path) else None
         if rc == 0 and os.path.exists(tmp):
             os.replace(tmp, path)
             _snap_cache["at"] = time.monotonic()
+            _snap_cache["failed_at"] = 0.0
+            _snap_cache["error"] = ""
             return path
+        # Keep the real reason - "unreachable" is not a diagnosis, and the
+        # message is shown in the UI so the operator can act on it.
+        last = mask_rtsp(err.splitlines()[-1]) if err else f"ffmpeg exited {rc}"
+        _snap_cache["failed_at"] = time.monotonic()
+        _snap_cache["error"] = last[:200]
+        log(f"Camera snapshot failed: {last[:200]}")
         try:
             os.remove(tmp)
         except OSError:
@@ -473,7 +517,8 @@ def compose_still(bus_target, width=None):
     if bus_target == "live":
         snap = camera_snapshot()
         if not snap:
-            return None, "camera snapshot unavailable"
+            return None, (_snap_cache.get("error")
+                          or "camera snapshot unavailable")
         try:
             with Image.open(snap) as raw:
                 cam = raw.convert("RGB")
@@ -595,8 +640,12 @@ class PreviewManager:
         # broadcast pipeline, so the preview is a faithful proof of what airs.
         # The scene layer leads, exactly as in start.sh: without it the Program
         # monitor would keep showing the camera while an away card was on air.
+        # "auto" mirrors what is going out, so it carries the scene layer and an
+        # away card covers the picture. An explicit "camera" pick must NOT: the
+        # whole point of choosing it is to check the camera while a card is on
+        # air, and painting the card over it makes the camera look dead.
         overlays = []
-        if source != "brb" and os.path.exists(SCENE_LAYER_LIST):
+        if source == "auto" and os.path.exists(SCENE_LAYER_LIST):
             overlays.append((SCENE_LAYER_LIST,
                              f"scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease",
                              "0:0"))
@@ -1305,10 +1354,14 @@ class AdminHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
+        # frame-src is the only outbound allowance: it lets the dashboard embed
+        # the YouTube player so the operator can see what actually arrives at
+        # the destination. Scripts, styles and XHR stay same-origin.
         self.send_header("Content-Security-Policy",
-                         "default-src 'self'; img-src 'self' data:; "
+                         "default-src 'self'; img-src 'self' data: https://i.ytimg.com; "
                          "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
-                         "connect-src 'self'")
+                         "connect-src 'self'; "
+                         "frame-src https://www.youtube-nocookie.com https://www.youtube.com")
 
     def send_json(self, data, status=200):
         body = json.dumps(data).encode()

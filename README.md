@@ -1,4 +1,4 @@
-# VantageCam Live v2.13.0
+# VantageCam Live v2.13.1
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker Build](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml/badge.svg)](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml)
@@ -370,7 +370,7 @@ Open `http://<host>:9999/` and log in with `ADMIN_USER` / `ADMIN_PASS`.
 
 | Page | What it's for |
 |:-----|:--------------|
-| **Dashboard** | Live preview and broadcast controls side by side, then health: bitrate/FPS/speed sparklines, camera, watchdog, system, and the event timeline |
+| **Dashboard** | Two monitors side by side &mdash; **Live Preview** (what the encoder is composing) and **On YouTube** (what viewers actually receive) &mdash; then broadcast controls and health: sparklines, camera, watchdog, system and the event timeline |
 | **Overlay Layout** | Drag and resize the sponsor and weather overlays on a scale model of the frame, then save (and optionally apply, which restarts the encoder) |
 | **Sponsors** | Upload, preview and delete logos per slot and Day/Night mode |
 | **Schedule & Airtime** | Run windows per logo, impression and airtime totals, CSV export, and which set is airing right now |
@@ -390,6 +390,28 @@ Open `http://<host>:9999/` and log in with `ADMIN_USER` / `ADMIN_PASS`.
 - **Restart** — bounce the encoder without touching the broadcast.
 - **Retry now** — cancel a pending watchdog backoff instead of waiting out the delay.
 - Live **viewer count** and broadcast title, polled slowly to respect the API quota.
+
+### The Two Dashboard Monitors
+
+**Live Preview** is the source side: a low-FPS pipeline composing the same overlays as the
+broadcast, so you see what is being encoded right now.
+
+**On YouTube** is the destination side: the real broadcast, embedded from YouTube, so you can
+confirm what viewers are actually receiving. It needs the YouTube API credentials to find the
+video, and it is **not loaded automatically** &mdash; press **Load player**, because it pulls
+the full stream over your connection and you rarely want that on a phone.
+
+The preview source selector matters when a scene is on air:
+
+| Source | Shows |
+|:-------|:------|
+| **Auto (what's on air)** | Mirrors the broadcast, including any away card covering the camera |
+| **Camera only** | The camera itself, ignoring the scene layer &mdash; use this to check the camera *while* an away card is on air |
+| **BRB screen** | The camera-failure card |
+
+> If an away card is on air, the Auto preview shows that card, not the camera. That is correct
+> &mdash; it is what viewers see &mdash; and the preview says so underneath rather than leaving
+> you wondering whether the camera has died.
 
 ### Live Preview
 
@@ -1253,6 +1275,18 @@ The playlist plays all MP3 files in alphabetical order, then loops back to the b
 ---
 
 ## 📜 Changelog
+
+### v2.13.1 - Destination monitor, and two camera-preview fixes
+
+**New Features:**
+- **"On YouTube" monitor on the Dashboard** &mdash; the real broadcast embedded next to the encoder preview, so the source and the destination sit side by side. Click-to-load, muted, `youtube-nocookie`; the CSP now allows exactly that one frame source and nothing else.
+
+**Fixed:**
+- **Choosing "Camera" in the preview still showed the away card.** The preview pipeline applied the scene layer to every source except BRB, so an away card covered the camera even when the camera was explicitly selected &mdash; making a perfectly healthy camera look dead. Only **Auto** carries the scene layer now; **Camera only** bypasses it.
+- **The Preview bus reported "Camera unreachable" on healthy cameras.** The single-frame snapshot grab did not carry the resilience flags the broadcast input has (`+genpts+discardcorrupt`, `err_detect ignore_err`, a real buffer and a longer timeout), so on an HEVC camera with any packet loss a lost reference frame aborted the grab. It now mirrors the broadcast input options.
+- **Snapshot failures now say what actually went wrong** (e.g. "Connection refused") instead of a generic "unreachable", with RTSP credentials masked out of the message and the log.
+- **A failing snapshot no longer piles up FFmpeg processes** &mdash; a failed grab can take ~10s to give up, and the Broadcast page polls every 5s, so failures now back off for 30 seconds.
+- The Auto preview states plainly when an away card is covering the camera.
 
 ### v2.13.0 - Optional scene scheduling
 
