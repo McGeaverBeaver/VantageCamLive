@@ -1,4 +1,4 @@
-# VantageCam Live v2.13.2
+# VantageCam Live v2.13.3
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker Build](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml/badge.svg)](https://github.com/McGeaverBeaver/VantageCamLive/actions/workflows/docker-build.yml)
@@ -390,6 +390,24 @@ Open `http://<host>:9999/` and log in with `ADMIN_USER` / `ADMIN_PASS`.
 - **Restart** — bounce the encoder without touching the broadcast.
 - **Retry now** — cancel a pending watchdog backoff instead of waiting out the delay.
 - Live **viewer count** and broadcast title, polled slowly to respect the API quota.
+
+### Reading the Broadcast page
+
+The page answers one question first, in plain words, in a coloured banner at the top:
+
+| Banner | Means |
+|:-------|:------|
+| 🟢 **On air: the camera** | Viewers are seeing the live camera feed |
+| 🟠 **On air: &lt;card name&gt; — viewers are NOT seeing the camera** | You put a card up by hand; press TAKE CAMERA to go back |
+| 🟠 **On air: technical difficulties card (automatic)** | The camera stopped responding; it returns by itself |
+| 🔴 **Not broadcasting** | Nothing is reaching YouTube at all, whatever the monitors show |
+
+The header pill is the same fact in one word: **CAMERA**, **AWAY CARD** or **OFF AIR**.
+
+> **Program never shows something that is not on air.** The moving picture comes from the
+> Dashboard preview, but only when that preview is set to *Auto* &mdash; the one mode that
+> carries the scene layer. Set it to *Camera only* and Program falls back to a still of the
+> real output rather than captioning a camera picture with the name of the card on air.
 
 ### The Two Dashboard Monitors
 
@@ -1291,6 +1309,19 @@ The playlist plays all MP3 files in alphabetical order, then loops back to the b
 ---
 
 ## 📜 Changelog
+
+### v2.13.3 - Say what is actually on air
+
+**Fixed:**
+- **Program showed the camera while labelled with the card that was on air.** The monitor used the preview's MJPEG stream whenever the preview was running, but "Camera only" mode deliberately bypasses the scene layer, so the picture and the label disagreed. Program now uses the live stream only in *Auto* mode and otherwise falls back to a still of the real output, saying why.
+- **The page could show a full Program/Preview view while nothing was being broadcast at all.** A stopped broadcast now says so first, in red, above everything else.
+- **Status lagged the truth by up to five seconds.** Labels, captions, the banner and the button states were computed on the slow scene poll while the facts they describe arrive on the three-second status poll. They now re-evaluate on every status update; only the still images stay on the slower cycle.
+- **The on-air header pill was truncated** ("ON AIR: CLOSED FOR TH…") and pushed the other pills off screen on a phone. It is now one word, with the full scene name in the banner and the tooltip.
+
+**Changed:**
+- A plain-language on-air banner replaces the small "on air:" hint.
+- The Away shortcut button names the card it will actually put up, and both shortcuts disable when they would do nothing.
+- Monitor captions sit below the picture instead of over it, where they covered the weather block and sponsor corners.
 
 ### v2.13.2 - Preview bus stops competing for the camera
 

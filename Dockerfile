@@ -4,7 +4,7 @@ FROM alpine:3.19
 ARG INCLUDE_INTEL=true
 ARG ARCH=amd64
 ARG MTX_VERSION=v1.15.0
-ARG VERSION=2.13.2
+ARG VERSION=2.13.3
 
 # Image metadata
 LABEL maintainer="McGeaverBeaver"

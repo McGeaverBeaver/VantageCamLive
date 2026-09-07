@@ -123,6 +123,18 @@
 
   /* sponsor schedule rows */
   /* --- broadcast suite --- */
+  .onair-banner { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px;
+                  border: 1px solid var(--border); border-left-width: 5px;
+                  border-radius: var(--radius); background: var(--panel); margin-bottom: 16px; }
+  .onair-banner.camera { border-left-color: var(--green); }
+  .onair-banner.card   { border-left-color: var(--orange); }
+  .onair-banner.off    { border-left-color: var(--red); }
+  .oa-dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 5px; flex: none; }
+  .onair-banner.camera .oa-dot { background: var(--green); }
+  .onair-banner.card   .oa-dot { background: var(--orange); }
+  .onair-banner.off    .oa-dot { background: var(--red); }
+  .oa-head { font-weight: 700; font-size: 15px; }
+  .oa-sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
   .buses { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   @media (max-width: 1100px) { .buses { grid-template-columns: 1fr; } }
   .bus { border: 2px solid var(--border); border-radius: var(--radius); overflow: hidden;
@@ -137,8 +149,11 @@
   .bus.pvw .bus-tag { background: var(--green); color: #06240f; }
   .bus-what { font-weight: 600; font-size: 13px; }
   .bus-img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: contain; background: #000; }
-  .bus-msg { position: absolute; inset: auto 0 0 0; padding: 8px 10px; font-size: 12px;
-             background: rgba(0,0,0,.65); color: var(--muted); }
+  /* Below the picture, not over it - an overlaid caption covered the weather
+     block and the sponsor corners, which are exactly what you are checking. */
+  .bus-msg { padding: 7px 10px; font-size: 12px; color: var(--muted);
+             background: var(--panel2); border-top: 1px solid var(--border); }
+  .bus-msg:empty { display: none; }
   .bus-empty { display: none; aspect-ratio: 16/9; align-items: center; justify-content: center;
                text-align: center; padding: 20px; color: var(--muted); font-size: 13px;
                background: repeating-linear-gradient(45deg, #0a0a0a, #0a0a0a 12px, #111 12px, #111 24px); }
@@ -474,10 +489,17 @@
       <p>Program is what viewers see right now. Preview is what a take would put there.
          Switching does not restart the encoder, so YouTube never sees a disconnect.</p></div>
 
+    <div class="onair-banner" id="onAirBanner">
+      <div class="oa-dot" id="oaDot"></div>
+      <div class="oa-text">
+        <div class="oa-head" id="oaHead">&hellip;</div>
+        <div class="oa-sub" id="oaSub"></div>
+      </div>
+    </div>
+
     <div class="panel">
       <div class="panel-head"><h2>&#127909; Program &amp; Preview</h2>
         <span class="spacer"></span>
-        <span class="muted" id="busHint"></span>
         <button id="btnBusRefresh">&#8635;</button>
       </div>
       <div class="panel-body">
@@ -815,8 +837,9 @@ async function refreshStatus() {
 function renderStatus(s) {
   const st = s.stream, cam = s.camera, aud = s.audio, wd = s.watchdog, sys = s.system, pv = s.preview;
   renderDayNight(s.day_night);
-  renderOnAirPill(s.program);
+  renderOnAirPill(s.program, s.stream);
   renderYouTubeOutput(s.youtube);
+  renderBuses({ images: false });   // keep labels/captions/banner in step with status
 
   const pillStream = $("pillStream");
   if (st.paused) {
@@ -1447,15 +1470,26 @@ async function loadEvents() {
 $("btnEventsRefresh").addEventListener("click", loadEvents);
 
 // The single most important fact on the page: is the camera on air, or a card?
-function renderOnAirPill(prog) {
+function renderOnAirPill(prog, stream) {
   const el = $("pillOnAir");
   if (!el) return;
   if (!prog || !prog.program) { el.textContent = "ON AIR ?"; el.className = "pill"; return; }
+  // Nothing reaching viewers outranks which source is selected: saying
+  // "AWAY CARD" while publishing nothing is worse than saying nothing at all.
+  if (stream && (stream.paused || !stream.broadcasting)) {
+    el.textContent = "OFF AIR";
+    el.className = "pill err";
+    el.title = stream.paused ? "You stopped the broadcast. Nothing is being published."
+                             : "The encoder is not running, so nothing is being published.";
+    return;
+  }
   const camera = prog.program === "live";
-  el.textContent = camera ? "ON AIR: CAMERA" : "ON AIR: " + prog.program_name.toUpperCase();
+  // Short on purpose: the pill row scrolls, and a long label pushes the stream
+  // and camera pills off screen on a phone. The scene name lives in the banner.
+  el.textContent = camera ? "CAMERA" : "AWAY CARD";
   el.className = "pill " + (camera ? "live" : "warn");
   el.title = camera ? "Viewers are seeing the camera feed."
-                    : "Viewers are seeing an away card, not the camera.";
+                    : "Viewers are seeing \"" + prog.program_name + "\", not the camera.";
 }
 
 // ---------- broadcast: program / preview buses + scenes ----------
@@ -1483,39 +1517,51 @@ async function loadScenes() {
 // Program monitor: the live MJPEG preview already composes the scene layer,
 // so when it is running it IS the program bus. Otherwise fall back to a
 // composited still so the operator still sees what is going out.
-function renderBuses() {
+function renderBuses(opts) {
   if (!sceneState) return;
+  // images:false re-evaluates every label, caption and button without
+  // re-fetching the stills, so the fast status poll can keep the page honest.
+  const withImages = !(opts && opts.images === false);
   const onAirScene = sceneState.program !== "live";
   $("pgmWhat").textContent = sceneLabel(sceneState.program);
   $("pvwWhat").textContent = sceneLabel(sceneState.preview);
-  // A failed image must read as a deliberate empty state, not a broken page.
+  // Caption is set immediately - it describes the state, not the image load.
+  // onload/onerror only choose between the picture and the empty state.
   function feed(busEl, img, msgEl, emptyEl, src, okMsg, failMsg) {
+    msgEl.textContent = okMsg;
     img.onload = () => { busEl.classList.remove("empty"); msgEl.textContent = okMsg; };
     img.onerror = () => { busEl.classList.add("empty"); emptyEl.textContent = failMsg;
                           msgEl.textContent = ""; };
-    img.src = src;
+    if (src !== null) img.src = src;
   }
-  const live = statusData && statusData.preview && statusData.preview.running;
+  // The MJPEG stream is only the program bus when the preview pipeline is
+  // running in "auto" - that is the only mode that carries the scene layer.
+  // In "camera" mode it deliberately bypasses the layer, so showing it here
+  // would caption a camera picture with the name of the card that is on air.
+  const pv = statusData && statusData.preview;
+  const pvSource = pv && pv.running ? pv.source : null;
+  const mjpegIsProgram = pvSource === "auto";
   const pgmBus = $("pgmImg").closest(".bus");
-  if (live) {
-    // The MJPEG preview already composes the scene layer, so it IS the program bus
-    if (!$("pgmImg").src.includes("/api/preview/stream")) {
-      feed(pgmBus, $("pgmImg"), $("pgmMsg"), $("pgmEmpty"),
-           "/api/preview/stream?t=" + Date.now(),
-           "Live preview pipeline - exactly what is being encoded.",
-           "Preview pipeline is not producing frames.");
-    }
+  if (mjpegIsProgram) {
+    const already = $("pgmImg").src.includes("/api/preview/stream");
+    feed(pgmBus, $("pgmImg"), $("pgmMsg"), $("pgmEmpty"),
+         already ? null : "/api/preview/stream?t=" + Date.now(),
+         "Live pipeline - moving picture of exactly what is being encoded.",
+         "Preview pipeline is not producing frames.");
   } else {
     feed(pgmBus, $("pgmImg"), $("pgmMsg"), $("pgmEmpty"),
-         "/api/program/still?bus=pgm&t=" + Date.now(),
-         onAirScene ? "Composited still. The away card is on air."
-                    : "Composited still. Start the preview on the Dashboard for live motion.",
-         onAirScene ? "Away card is on air, but its still could not be rendered."
+         withImages ? "/api/program/still?bus=pgm&t=" + Date.now() : null,
+         pvSource === "camera"
+           ? "Still image. The Dashboard preview is set to Camera only, which does not "
+             + "show the scene layer, so it cannot stand in for Program."
+           : (onAirScene ? "Still image of what is on air."
+                         : "Still image. Start the Dashboard preview for a moving picture."),
+         onAirScene ? "The card on air could not be rendered as a still."
                     : "Camera unreachable, so there is no program still to show.");
   }
   const pvwBus = $("pvwImg").closest(".bus");
   feed(pvwBus, $("pvwImg"), $("pvwMsg"), $("pvwEmpty"),
-       "/api/program/still?bus=pvw&t=" + Date.now(),
+       withImages ? "/api/program/still?bus=pvw&t=" + Date.now() : null,
        sceneState.preview === "live" ? "Camera, composited with the current overlays."
                                      : "Away card, composited with the current overlays.",
        sceneState.preview === "live"
@@ -1528,7 +1574,60 @@ function renderBuses() {
   btn.innerHTML = "&#9654; TAKE " + esc(sceneLabel(sceneState.preview)).toUpperCase();
   $("takeHint").textContent = "Puts " + sceneLabel(sceneState.preview) +
     " on air. No encoder restart, no dropout.";
-  $("busHint").textContent = "on air: " + sceneLabel(sceneState.program);
+  // "Away" alone is ambiguous - name the card it will actually put up
+  $("btnTakeAway").innerHTML = "&#9208; " + esc(sceneLabel(sceneState.away_scene));
+  $("btnTakeAway").title = "Take the nominated away card (" +
+    sceneLabel(sceneState.away_scene) + ") to air";
+  $("btnTakeLive").disabled = sceneState.program === "live";
+  $("btnTakeAway").disabled = sceneState.program === sceneState.away_scene;
+  renderOnAirBanner();
+}
+
+// The one question an operator always needs answered: what are viewers seeing?
+function renderOnAirBanner() {
+  const banner = $("onAirBanner");
+  if (!banner || !sceneState) return;
+  const st = statusData && statusData.stream;
+  const onCamera = sceneState.program === "live";
+  const name = sceneLabel(sceneState.program);
+  const camOk = statusData && statusData.camera &&
+                statusData.camera.rtsp_status === "ok";
+
+  // Publishing state comes first: a beautiful program bus going nowhere is the
+  // single most misleading thing this page could show.
+  if (st && st.paused) {
+    banner.className = "onair-banner off";
+    $("oaHead").textContent = "Not broadcasting - stopped by you";
+    $("oaSub").innerHTML = "Nothing is being sent to YouTube. The monitors below show what " +
+      "<em>would</em> go out. Press Start Broadcast on the Dashboard to resume.";
+    return;
+  }
+  if (st && !st.broadcasting) {
+    banner.className = "onair-banner off";
+    $("oaHead").textContent = "Not broadcasting - the encoder is not running";
+    $("oaSub").textContent = "The monitors below show what would go out once it starts.";
+    return;
+  }
+  if (onCamera) {
+    banner.className = "onair-banner camera";
+    $("oaHead").textContent = "On air: the camera";
+    $("oaSub").textContent = "Viewers are seeing the live camera feed." +
+      (st && st.mode === "fallback"
+        ? " The camera is unreachable, so the technical-difficulties card is standing in automatically."
+        : "");
+    if (st && st.mode === "fallback") {
+      banner.className = "onair-banner card";
+      $("oaHead").textContent = "On air: technical difficulties card (automatic)";
+      $("oaSub").textContent = "The camera stopped responding, so viewers are seeing the " +
+        "camera-failure card. It returns to the camera by itself once the camera is back.";
+    }
+    return;
+  }
+  banner.className = "onair-banner card";
+  $("oaHead").textContent = "On air: " + name + " - viewers are NOT seeing the camera";
+  $("oaSub").textContent = "You put this card up by hand. " +
+    (camOk ? "The camera is healthy and ready. " : "") +
+    "Press TAKE CAMERA below to return the live view.";
 }
 
 function renderPvwPicker() {
